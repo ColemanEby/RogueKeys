@@ -1,10 +1,10 @@
 -- main.lua
 local StateManager = require("modules.statemanager")
-local typingState = require("states.typingState")
+local mainMenuState = require("states.mainMenuState")
 
 function love.load()
     love.graphics.setFont(love.graphics.newFont(14))
-    StateManager.switch(typingState)
+    StateManager.switch(mainMenuState)
 end
 
 function love.update(dt)

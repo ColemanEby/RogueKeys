@@ -1,17 +1,22 @@
 -- states/typingState.lua
-local TypingTrainer = require("modules.typingtrainer")
+local TypingTrainer = require("modules/typingtrainer")
 local TextGenerator = require("modules.textgenerator")
+local StatTracker = require("modules.statstracker")
+local StateManager = require("modules.statemanager")
+-- (Lazy-load mainMenuState when needed to avoid circular dependencies)
 
 local typingState = {}
 local trainer = nil
+local sessionRecorded = false
 
 function typingState.enter()
     local text = TextGenerator.getRandomText()
     trainer = TypingTrainer.new(text)
+    sessionRecorded = false
 end
 
 function typingState.update(dt)
-    -- Future rogue-like updates (e.g., item effects, enemy actions) would go here.
+    -- Future rogue‑like updates can go here.
 end
 
 function typingState.draw()
@@ -19,21 +24,49 @@ function typingState.draw()
     trainer:draw(20, 20)
 
     if trainer.finished then
-         love.graphics.setColor(1, 1, 0)
-         love.graphics.print("Press R to restart", 20, 150)
-         love.graphics.setColor(1, 1, 1)
+        love.graphics.setColor(1, 1, 0)
+        love.graphics.print("Press R to restart, M for main menu", 20, love.graphics.getHeight() - 40)
+        love.graphics.setColor(1, 1, 1)
+        if not sessionRecorded then
+            local sessionTime = trainer:getTimeTaken()
+            local keystrokes = #trainer.typed
+            local sessionStats = {
+                keystrokes = keystrokes,
+                mistakes = trainer.mistakes,
+                correct = trainer.correctCount,
+                time = sessionTime,
+                apm = trainer:getAPM(),
+                accuracy = trainer:getAccuracy(),
+                longestStreak = trainer.longestStreak,
+            }
+            StatTracker.recordSession(sessionStats)
+            sessionRecorded = true
+        end
     end
 end
 
 function typingState.keypressed(key)
-    if key == "r" and trainer.finished then
-         typingState.enter()  -- Restart the session
+    if not trainer.finished then
+        if key == "backspace" then
+            trainer:backspace()
+        elseif key == "return" or key == "kpenter" then
+            if #trainer.typed == #trainer.text then
+                trainer:finish()
+            end
+        end
+    else
+        if key == "r" then
+            typingState.enter()  -- Restart the session.
+        elseif key == "m" then
+            local mainMenuState = require("states.mainMenuState")
+            StateManager.switch(mainMenuState)
+        end
     end
 end
 
 function typingState.textinput(t)
     if not trainer.finished then
-         trainer:update(t)
+        trainer:handleInput(t)
     end
 end
 
