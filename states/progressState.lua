@@ -1,9 +1,9 @@
 -- states/progressState.lua
-local StateManager  = require("modules/statemanager")
-
--- Do not require roundState at the top to avoid circular dependency.
-
+local StatTracker  = require("modules/statstracker")
+local StateManager = require("modules/statemanager")
+local mainMenuState = require("states/mainMenuState")
 local progressState = {}
+progressState.name = "ProgressState"
 
 local data = nil
 local passed = false
@@ -22,7 +22,6 @@ end
 function progressState.draw()
     love.graphics.clear(0.15, 0.15, 0.15)
     love.graphics.setColor(1, 1, 1)
-    
     local title = ""
     if passed then
         title = "Round " .. data.roundNumber .. " PASSED!"
@@ -32,14 +31,10 @@ function progressState.draw()
     love.graphics.printf(title, 0, 50, love.graphics.getWidth(), "center")
     
     local statsLines = {
-       string.format("Your Accuracy: %.2f%% (Required: %.2f%%)", data.accuracy, data.requiredAccuracy),
-       string.format("Your Score: %.2f (Required: %.2f)", data.finalScore, data.requiredScore),
-       string.format("APM: %.2f", data.apm),
+       string.format("Your Score: %.2f (Required: %.2f)", data.score, data.requiredScore),
+       string.format("Keystrokes: %d", data.keystrokes),
        string.format("Time: %.2fs", data.time),
-       string.format("Longest Streak: %d", data.longestStreak),
        string.format("Money Earned: %d", data.moneyEarned),
-       string.format("Total Money: %d", data.totalMoney),
-       string.format("Keyboard Multiplier: %.2f", data.keyboardMultiplier)
     }
     local y = 100
     for _, line in ipairs(statsLines) do
@@ -58,7 +53,7 @@ end
 
 function progressState.keypressed(key)
     if passed then
-       if key == "return" or key == "kpenter" then
+       if (key == "return") or (key == "kpenter") then
             local roundState = require("states/roundState")
             StateManager.switch(roundState)
        elseif key == "s" then
@@ -67,7 +62,6 @@ function progressState.keypressed(key)
        end
     else
        if key == "m" then
-            local mainMenuState = require("states/mainMenuState")
             StateManager.switch(mainMenuState)
        end
     end
