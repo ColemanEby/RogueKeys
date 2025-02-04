@@ -1,9 +1,10 @@
 -- states/roundState.lua
-local TypingTrainer = require("modules.typingtrainer")
-local TextGenerator = require("modules.textgenerator")
-local StatTracker   = require("modules.statstracker")
-local StateManager  = require("modules.statemanager")
-local progressState = require("states.progressState")
+local TypingTrainer = require("modules/typingtrainer")
+local TextGenerator = require("modules/textgenerator")
+local StatTracker   = require("modules/statstracker")
+local StateManager  = require("modules/statemanager")
+local progressState = require("states/progressState")
+local Player        = require("modules/player")
 
 local roundState = {}
 roundState.currentRound = 1  -- persists between rounds
@@ -11,13 +12,13 @@ roundState.currentRound = 1  -- persists between rounds
 local trainer = nil
 
 function roundState.enter()
-    -- If coming from progressState after a passed round, currentRound is already updated.
-    local text = TextGenerator.getRandomText()  -- (Could be enhanced with round difficulty.)
+    -- When entering a new round, generate a new phrase.
+    local text = TextGenerator.getRandomText()  -- Could be enhanced based on round number.
     trainer = TypingTrainer.new(text)
 end
 
 function roundState.update(dt)
-    -- (Additional mechanics or rogue‑like effects could be applied here.)
+    -- (Additional mechanics can be applied here.)
 end
 
 function roundState.draw()
@@ -42,22 +43,31 @@ function roundState.keypressed(key)
         if key == "backspace" then
             trainer:backspace()
         elseif key == "return" or key == "kpenter" then
-            -- Only allow finishing if the player has typed the entire phrase.
             if #trainer.typed == #trainer.text then
                 trainer:finish()
             end
         end
     else
         if key == "return" or key == "kpenter" then
-            -- Evaluate the round only after the round is finished.
+            -- Evaluate the round.
             local accuracy = trainer:getAccuracy()  -- percentage
             local apm = trainer:getAPM()
-            local roundScore = (accuracy / 100) * apm
+            local rawScore = (accuracy / 100) * apm
+
+            -- Incorporate keyboard multiplier.
+            local finalScore = rawScore * Player.keyboard.multiplier
 
             local requiredAccuracy = math.min(100, 80 + roundState.currentRound - 1)
             local requiredScore    = 40 * roundState.currentRound
 
-            local passed = (accuracy >= requiredAccuracy) and (roundScore >= requiredScore)
+            local passed = (accuracy >= requiredAccuracy) and (finalScore >= requiredScore)
+
+            -- If passed, award money (for example, money earned equals the floor of the final score).
+            local moneyEarned = 0
+            if passed then
+                moneyEarned = math.floor(finalScore)
+                Player.totalMoney = Player.totalMoney + moneyEarned
+            end
 
             -- Record the round’s stats.
             local sessionStats = {
@@ -68,21 +78,25 @@ function roundState.keypressed(key)
                 apm              = apm,
                 accuracy         = accuracy,
                 longestStreak    = trainer.longestStreak,
-                roundScore       = roundScore,
+                rawScore         = rawScore,
+                finalScore       = finalScore,
                 requiredAccuracy = requiredAccuracy,
                 requiredScore    = requiredScore,
                 roundNumber      = roundState.currentRound,
+                moneyEarned      = moneyEarned,
+                totalMoney       = Player.totalMoney,
+                keyboardMultiplier = Player.keyboard.multiplier
             }
             StatTracker.recordSession(sessionStats)
             
-            -- Pass the round data to progressState.
+            -- Prepare progressState.
+            local progressState = require("states/progressState")
             progressState.setData(sessionStats, passed)
             
-            -- If the round is passed, prepare for the next round.
             if passed then
                 roundState.currentRound = roundState.currentRound + 1
             else
-                roundState.currentRound = 1  -- Reset on failure (game over).
+                roundState.currentRound = 1  -- Reset round count on failure.
             end
             
             StateManager.switch(progressState)

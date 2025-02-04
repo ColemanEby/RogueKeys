@@ -1,19 +1,18 @@
 -- states/mainMenuState.lua
-local StateManager = require("modules.statemanager")
-local roundState  = require("states/roundState")
-local statsState  = require("states/statsState")
-
+local StateManager = require("modules/statemanager")
+-- Do NOT require the other states here—lazy-load them in the key handler.
 local mainMenuState = {}
+mainMenuState.name = "MainMenu"
 
 local menuOptions = {"Start Endless Mode", "View Statistics", "Exit"}
 local currentSelection = 1
 
 function mainMenuState.enter()
     currentSelection = 1
+    print("Entered Main Menu")
 end
 
 function mainMenuState.update(dt)
-    -- Nothing required here yet.
 end
 
 function mainMenuState.draw()
@@ -23,7 +22,7 @@ function mainMenuState.draw()
     
     for i, option in ipairs(menuOptions) do
         if i == currentSelection then
-            love.graphics.setColor(1, 1, 0)  -- highlight selection
+            love.graphics.setColor(1, 1, 0)  -- highlight
         else
             love.graphics.setColor(1, 1, 1)
         end
@@ -39,11 +38,17 @@ function mainMenuState.keypressed(key)
     elseif key == "down" then
         currentSelection = currentSelection + 1
         if currentSelection > #menuOptions then currentSelection = 1 end
-    elseif key == "return" or key == "kpenter" then
+    elseif (key == "return") or (key == "kpenter") then
         if currentSelection == 1 then
-            StateManager.switch(roundState)
+            print("Before switching: MainMenu -> keyboardSelectState")
+            local keyboardSelectState = require("states/keyboardSelectState")
+            StateManager.switch(keyboardSelectState)
+            print("After switching to KeyboardSelectState")
         elseif currentSelection == 2 then
+            print("Before switching: MainMenu -> StatsState")
+            local statsState = require("states/statsState")
             StateManager.switch(statsState)
+            print("After switching to StatsState")
         elseif currentSelection == 3 then
             love.event.quit()
         end
@@ -51,7 +56,7 @@ function mainMenuState.keypressed(key)
 end
 
 function mainMenuState.textinput(text)
-    -- No text input needed in the main menu.
+    -- No text input needed.
 end
 
 return mainMenuState

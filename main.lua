@@ -1,8 +1,8 @@
--- main.lua
-local StateManager = require("modules.statemanager")
-local mainMenuState = require("states.mainMenuState")
+local StateManager = require("modules/statemanager")
+local mainMenuState = require("states/mainMenuState")
 
 function love.load()
+    love.keyboard.setKeyRepeat(false)  -- Disable key repeat to avoid duplicate events.
     love.graphics.setFont(love.graphics.newFont(14))
     StateManager.switch(mainMenuState)
 end
