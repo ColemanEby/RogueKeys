@@ -4,7 +4,7 @@ local StateManager = require("modules/statemanager")
 local mainMenuState = {}
 mainMenuState.name = "MainMenu"
 
-local menuOptions = {"Start Endless Mode", "View Statistics", "Exit"}
+local menuOptions = {"Start Endless Mode", "View Statistics", "Exit", "DevSHit"}
 local currentSelection = 1
 
 function mainMenuState.enter()
@@ -14,6 +14,8 @@ end
 
 function mainMenuState.update(dt)
 end
+
+local devModeActive = false
 
 function mainMenuState.draw()
     love.graphics.clear(0.2, 0.2, 0.2)
@@ -27,6 +29,17 @@ function mainMenuState.draw()
             love.graphics.setColor(1, 1, 1)
         end
         love.graphics.printf(option, 0, 100 + i * 30, love.graphics.getWidth(), "center")
+    end
+    
+
+    -- Draw dev canvas overlay if active.
+    if devModeActive then
+        local rendy = require("modules/renderer")
+        local canvas = rendy.getMainMenuCanvas()
+        love.graphics.setBlendMode("alpha", "premultiplied")
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.draw(canvas, 0, 0)
+        love.graphics.setBlendMode("alpha")  -- reset blend mode if needed
     end
     love.graphics.setColor(1, 1, 1)
 end
@@ -51,6 +64,9 @@ function mainMenuState.keypressed(key)
             print("After switching to StatsState")
         elseif currentSelection == 3 then
             love.event.quit()
+        elseif currentSelection == 4 then
+            print("dev shit")
+            devModeActive = not devModeActive
         end
     end
 end
