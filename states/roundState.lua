@@ -36,10 +36,8 @@ function roundState.keypressed(key)
     if not trainer.finished then
         if key == "backspace" then
             trainer:backspace()
-        elseif (key == "return") or (key == "kpenter") then
-            if #trainer.typed == #trainer.text then
-                trainer:finish()
-            end
+        elseif #trainer.typed >= #trainer.text then
+            trainer:finish()
         end
     else
         if (key == "return") or (key == "kpenter") then

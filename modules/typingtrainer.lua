@@ -81,7 +81,7 @@ function TypingTrainer:backspace()
 end
 
 function TypingTrainer:finish()
-    if not self.finished and #self.typed == #self.text then
+    if not self.finished then
          self.finished = true
          self.endTime = love.timer.getTime()
     end
@@ -89,10 +89,10 @@ end
 
 
 function TypingTrainer:getTimeTaken()
-    if not self.finished then
-        return love.timer.getTime() - self.startTime
-    else
+    if self.finished then
         return self.endTime - self.startTime
+    else
+        return love.timer.getTime() - self.startTime
     end
 end
 
