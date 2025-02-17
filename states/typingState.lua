@@ -10,8 +10,7 @@ local trainer = nil
 local sessionRecorded = false
 
 function typingState.enter()
-    local text = TextGenerator.getRandomText()
-    trainer = TypingTrainer.new(text)
+    trainer = TypingTrainer.new(TextGenerator:getRandomText())
     sessionRecorded = false
 end
 

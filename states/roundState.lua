@@ -13,8 +13,7 @@ roundState.currentRound = 1  -- persists between rounds
 local trainer = nil
 
 function roundState.enter()
-    local text = TextGenerator.getRandomText()
-    trainer = TypingTrainer.new(text)
+    trainer = TypingTrainer.new(TextGenerator:getRandomText())
 end
 
 function roundState.update(dt)
