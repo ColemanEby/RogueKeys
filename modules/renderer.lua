@@ -1,57 +1,57 @@
--- modules/renderer.lua
 local Renderer = {}
 Renderer.__index = Renderer
+
+-- Default settings
 Renderer.scale = "dynamic"
 Renderer.theme = "dark"
 
 local mainCanvasPadding = 20
 
-function Renderer:getMainMenuCanvas()
-    -- Get the screen dimensions and subtract padding to define the canvas size.
+-- Create a new Renderer instance.
+function Renderer:new()
+    local self = setmetatable({}, Renderer)
+    self.menus = {}  -- Table to store menus that are added.
+    return self
+end
+
+-- Add a menu to the renderer's management.
+function Renderer:addMenu(menu)
+    table.insert(self.menus, menu)
+end
+
+-- Draw the main canvas and render all added menus onto it.
+function Renderer:drawMainCanvas()
     local screenWidth = love.graphics.getWidth()
     local screenHeight = love.graphics.getHeight()
 
     local canvasWidth = screenWidth - (2 * mainCanvasPadding)
     local canvasHeight = screenHeight - (2 * mainCanvasPadding)
 
-    -- Create a new canvas with the calculated dimensions.
     local canvas = love.graphics.newCanvas(canvasWidth, canvasHeight)
     love.graphics.setCanvas(canvas)
     love.graphics.clear(0, 0, 0, 0)
     love.graphics.setBlendMode("alpha")
 
-    -- Draw the main rectangle covering the entire canvas.
+    -- Draw a main background rectangle (example style).
     love.graphics.setColor(1, 0, 0, 0.5)  -- semi-transparent red
     love.graphics.rectangle("fill", 0, 0, canvasWidth, canvasHeight)
 
-    -- Define a gap for spacing between the inner rectangles and edges.
-    local gap = 10
-    -- Calculate inner rectangle dimensions:
-    -- We'll fit two inner rectangles side-by-side and vertically so that each has equal width and height.
-    local innerWidth = (canvasWidth - 3 * gap) / 2
-    local innerHeight = (canvasHeight - 3 * gap) / 2
+    -- Render each menu in its modular slot.
+    for _, menu in ipairs(self.menus) do
+        menu:draw()
+    end
 
-    local canvas1 = love.graphics.newCanvas(canvasWidth, canvasHeight)
-    -- Draw the first inner rectangle (top-left).
-    love.graphics.setColor(0, 1, 0, 0.5)  -- semi-transparent green
-    love.graphics.rectangle("fill", gap, gap, innerWidth, innerHeight)
-
-    -- Draw the second inner rectangle (bottom-right).
-    love.graphics.setColor(0, 0, 1, 0.5)  -- semi-transparent blue
-    love.graphics.rectangle("fill", innerWidth + 2 * gap, innerHeight + 2 * gap, innerWidth, innerHeight)
     love.graphics.setCanvas()
-
-    return canvas
+    love.graphics.draw(canvas, mainCanvasPadding, mainCanvasPadding)
 end
 
-
-
+-- Getter functions (placeholders for further functionality)
 function Renderer:getScale()
-    
+    return self.scale
 end
 
 function Renderer:getTheme()
-    
+    return self.theme
 end
 
 return Renderer

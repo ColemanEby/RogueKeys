@@ -1,5 +1,6 @@
 -- states/mainMenuState.lua
 local StateManager = require("modules/statemanager")
+
 -- Do NOT require the other states here—lazy-load them in the key handler.
 local mainMenuState = {}
 mainMenuState.name = "MainMenu"
@@ -35,11 +36,21 @@ function mainMenuState.draw()
     -- Draw dev canvas overlay if active.
     if devModeActive then
         local rendy = require("modules/renderer")
-        local canvas = rendy.getMainMenuCanvas()
-        love.graphics.setBlendMode("alpha", "premultiplied")
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.draw(canvas, 0, 0)
-        love.graphics.setBlendMode("alpha")  -- reset blend mode if needed
+        local Menu = require("modules/menu")
+        
+        renderer = rendy:new()
+        -- Create a score menu positioned at (70,70) with size 200x100.
+        scoreMenu = Menu:new(70, 70, 200, 100, { backgroundColor = {0, 0.8, 0, 0.5} })
+        scoreMenu:update({ score = 12345 })
+
+        -- You can add as many menus as you need.
+        renderer:addMenu(scoreMenu)
+        renderer:drawMainCanvas()
+        --local canvas = rendy.getMainMenuCanvas()
+        --love.graphics.setBlendMode("alpha", "premultiplied")
+        --love.graphics.setColor(1, 1, 1, 1)
+        --love.graphics.draw(canvas, 20, 20)
+        --love.graphics.setBlendMode("alpha")  -- reset blend mode if needed
     end
     love.graphics.setColor(1, 1, 1)
 end

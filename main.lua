@@ -22,3 +22,4 @@ end
 function love.textinput(text)
     StateManager.textinput(text)
 end
+
