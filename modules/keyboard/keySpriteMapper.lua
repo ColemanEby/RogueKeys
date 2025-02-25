@@ -220,6 +220,10 @@ end
 
 -- Get a sprite quad for a character
 function KeySpriteMapper:getQuadForChar(char, isDark)
+    if not self.loaded or not self.sheet then
+        return nil
+    end
+
     -- Convert to lowercase for consistency
     char = string.lower(char)
 
@@ -241,11 +245,19 @@ end
 -- Draw a key sprite
 function KeySpriteMapper:drawKey(char, x, y, width, height, isDark)
     if not self.loaded then
-        self:load()
+        local success = self:load()
+        if not success then
+            return false
+        end
     end
 
     if not self.sheet then
         return false
+    end
+
+    -- Handle special case for space
+    if char == " " then
+        char = "space"
     end
 
     local quad = self:getQuadForChar(char, isDark)
@@ -254,6 +266,7 @@ function KeySpriteMapper:drawKey(char, x, y, width, height, isDark)
     end
 
     -- Draw the sprite with scaling to fit the desired width/height
+    love.graphics.setColor(1, 1, 1, 1) -- Reset color to white for proper sprite rendering
     love.graphics.draw(
             self.sheet,
             quad,

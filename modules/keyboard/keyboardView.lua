@@ -152,119 +152,40 @@ function KeyboardView:draw(x, y, scale)
             local isUpgraded = self.keyboardModel:isKeyUpgraded(keyValue)
             local upgradeLevel = self.keyboardModel:getKeyBonus(keyValue)
 
+            -- Apply any active animations
+            local animScale = 1.0
+            for _, anim in ipairs(self.animations) do
+                if anim.key == keyValue and anim.type == "press" then
+                    local t = anim.progress / anim.duration
+                    -- Ease out animation curve
+                    t = 1 - (1 - t) * (1 - t)
+                    animScale = 1 + (anim.maxScale - 1) * (1 - t)
+                    break
+                end
+            end
+
             -- Draw key using sprite or shapes
-            if self.useSprites then
-                -- Choose appropriate sprite
-                local spriteKey = "key_normal"
-                if isUpgraded then
-                    spriteKey = "key_upgraded"
-                end
-                if isActive then
-                    spriteKey = "key_highlight"
-                end
-                if keyDisplay == "Space" then
-                    spriteKey = "key_space"
-                end
-
-                local sprite = self.keySprites[spriteKey]
-
-                -- Apply any active animations
-                local animScale = 1.0
-                for _, anim in ipairs(self.animations) do
-                    if anim.key == keyValue and anim.type == "press" then
-                        local t = anim.progress / anim.duration
-                        -- Ease out animation curve
-                        t = 1 - (1 - t) * (1 - t)
-                        animScale = 1 + (anim.maxScale - 1) * (1 - t)
-                        break
-                    end
-                end
-
-                -- Draw the sprite with scaling
-                love.graphics.setColor(1, 1, 1, 1)
-                love.graphics.draw(
-                        sprite.texture,
-                        rowX + keyWidth/2,
-                        rowY + keyHeight/2,
-                        0,  -- rotation
-                        keyWidth/sprite:getWidth() * animScale,
-                        keyHeight/sprite:getHeight() * animScale,
-                        sprite:getWidth()/2,
-                        sprite:getHeight()/2
-                )
-            else
-                -- Draw key using rectangles and shapes
-
-                -- Determine colors based on state
-                local keyColor = self.style.keyColor
-                if isUpgraded then
-                    keyColor = self.style.keyUpgradedColor
-                end
-                if isActive then
-                    keyColor = self.style.keyHighlightColor
-                end
-
-                -- Apply any active animations
-                local animScale = 1.0
-                for _, anim in ipairs(self.animations) do
-                    if anim.key == keyValue and anim.type == "press" then
-                        local t = anim.progress / anim.duration
-                        -- Ease out animation curve
-                        t = 1 - (1 - t) * (1 - t)
-                        animScale = 1 + (anim.maxScale - 1) * (1 - t)
-                        break
-                    end
-                end
-
+            if self.useSprites and self.spriteMapper then
+                -- Try to draw the key using sprite mapper
+                local isDark = isUpgraded or isActive
+                
                 -- Calculate key position with animation scaling
                 local keyX = rowX + (keyWidth - keyWidth * animScale) / 2
                 local keyY = rowY + (keyHeight - keyHeight * animScale) / 2
                 keyWidth = keyWidth * animScale
                 keyHeight = keyHeight * animScale
-
-                -- Draw key shadow
-                love.graphics.setColor(self.style.keyShadowColor)
-                love.graphics.rectangle(
-                        "fill",
-                        keyX + self.style.keyShadowOffset,
-                        keyY + self.style.keyShadowOffset,
-                        keyWidth,
-                        keyHeight,
-                        self.style.keyCornerRadius * dims.scale
-                )
-
-                -- Draw key background
-                love.graphics.setColor(keyColor)
-                love.graphics.rectangle(
-                        "fill",
-                        keyX,
-                        keyY,
-                        keyWidth,
-                        keyHeight,
-                        self.style.keyCornerRadius * dims.scale
-                )
-
-                -- Draw key border
-                love.graphics.setColor(self.style.keyStrokeColor)
-                love.graphics.rectangle(
-                        "line",
-                        keyX,
-                        keyY,
-                        keyWidth,
-                        keyHeight,
-                        self.style.keyCornerRadius * dims.scale
-                )
+                
+                -- Attempt to draw with sprite mapper first
+                local success = self.spriteMapper:drawKey(keyValue, keyX, keyY, keyWidth, keyHeight, isDark)
+                
+                -- If sprite drawing fails, fall back to shape-based rendering
+                if not success then
+                    self:drawKeyAsShape(keyX, keyY, keyWidth, keyHeight, keyDisplay, isUpgraded, isActive, animScale)
+                end
+            else
+                -- Draw key using rectangles and shapes (fallback method)
+                self:drawKeyAsShape(rowX, rowY, keyWidth, keyHeight, keyDisplay, isUpgraded, isActive, animScale)
             end
-
-            -- Draw key label regardless of sprite/shape mode
-            love.graphics.setColor(self.style.keyTextColor)
-            local textWidth = font:getWidth(keyDisplay)
-            local textHeight = font:getHeight()
-            love.graphics.print(
-                    keyDisplay,
-                    rowX + (keyWidth - textWidth) / 2,
-                    rowY + (keyHeight - textHeight) / 2
-            )
 
             -- Draw upgrade indicator if upgraded
             if isUpgraded then
@@ -274,7 +195,7 @@ function KeyboardView:draw(x, y, scale)
                 love.graphics.print(
                         bonusText,
                         rowX + keyWidth - bonusWidth - 5,
-                        rowY + keyHeight - textHeight - 2
+                        rowY + keyHeight - font:getHeight() - 2
                 )
             end
 
@@ -288,6 +209,72 @@ function KeyboardView:draw(x, y, scale)
 
     -- Reset color
     love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Helper method for drawing keys with shapes
+function KeyboardView:drawKeyAsShape(x, y, width, height, keyDisplay, isUpgraded, isActive, animScale)
+    -- Determine colors based on state
+    local keyColor = self.style.keyColor
+    if isUpgraded then
+        keyColor = self.style.keyUpgradedColor
+    end
+    if isActive then
+        keyColor = self.style.keyHighlightColor
+    end
+
+    -- Calculate key position with animation scaling if not already applied
+    local keyX = x
+    local keyY = y
+    if animScale and animScale ~= 1.0 then
+        keyX = x + (width - width * animScale) / 2
+        keyY = y + (height - height * animScale) / 2
+        width = width * animScale
+        height = height * animScale
+    end
+
+    -- Draw key shadow
+    love.graphics.setColor(self.style.keyShadowColor)
+    love.graphics.rectangle(
+            "fill",
+            keyX + self.style.keyShadowOffset,
+            keyY + self.style.keyShadowOffset,
+            width,
+            height,
+            self.style.keyCornerRadius
+    )
+
+    -- Draw key background
+    love.graphics.setColor(keyColor)
+    love.graphics.rectangle(
+            "fill",
+            keyX,
+            keyY,
+            width,
+            height,
+            self.style.keyCornerRadius
+    )
+
+    -- Draw key border
+    love.graphics.setColor(self.style.keyStrokeColor)
+    love.graphics.rectangle(
+            "line",
+            keyX,
+            keyY,
+            width,
+            height,
+            self.style.keyCornerRadius
+    )
+
+    -- Draw key label
+    love.graphics.setColor(self.style.keyTextColor)
+    local font = love.graphics.getFont()
+    local textWidth = font:getWidth(keyDisplay)
+    local textHeight = font:getHeight()
+    love.graphics.print(
+            keyDisplay,
+            keyX + (width - textWidth) / 2,
+            keyY + (height - textHeight) / 2
+    )
 end
 
 -- Find which key was clicked
