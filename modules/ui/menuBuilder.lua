@@ -1,5 +1,5 @@
 -- modules/ui/menuBuilder.lua
--- A flexible menu building system for creating consistent game menus
+-- A flexible menu building system with positioning support
 
 local ResourceManager = require("engine/resourceManager")
 
@@ -23,6 +23,9 @@ function MenuBuilder.new(title, options)
     self.currentSelection = 1
     self.scrollOffset = 0
     self.maxVisible = 8
+
+    -- Position options (new)
+    self.position = {}
 
     -- Styling options
     options = options or {}
@@ -49,6 +52,13 @@ function MenuBuilder.new(title, options)
     self.onBack = nil
     self.onClose = nil
 
+    return self
+end
+
+-- Set the menu position explicitly
+function MenuBuilder:setPosition(x, y)
+    self.position.x = x
+    self.position.y = y
     return self
 end
 
@@ -228,17 +238,32 @@ end
 
 -- Calculate x and y coordinates for menu rendering
 function MenuBuilder:calculatePosition()
+    -- If position is explicitly set, use it
+    if self.position.x and self.position.y then
+        return self.position.x, self.position.y, self.style.width, self:calculateHeight()
+    end
+
+    -- Otherwise, center the menu
     local sw, sh = love.graphics.getDimensions()
     local menuWidth = self.style.width
-    local menuHeight = self.style.padding * 2 + self.style.itemHeight * math.min(#self.items, self.maxVisible)
-            + self.style.itemSpacing * (math.min(#self.items, self.maxVisible) - 1)
-            + self.style.titleFontSize + self.style.padding
+    local menuHeight = self:calculateHeight()
 
     -- Center the menu on screen
     local x = (sw - menuWidth) / 2
     local y = (sh - menuHeight) / 2
 
     return x, y, menuWidth, menuHeight
+end
+
+-- Calculate the total height of the menu
+function MenuBuilder:calculateHeight()
+    local visibleItems = math.min(#self.items, self.maxVisible)
+    local titleHeight = (self.title and #self.title > 0) and (self.style.titleFontSize + self.style.padding) or 0
+
+    return self.style.padding * 2 +
+            self.style.itemHeight * visibleItems +
+            self.style.itemSpacing * (visibleItems - 1) +
+            titleHeight
 end
 
 -- Draw the menu
@@ -249,18 +274,23 @@ function MenuBuilder:draw()
     love.graphics.setColor(unpack(self.style.backgroundColor))
     love.graphics.rectangle("fill", x, y, menuWidth, menuHeight, self.style.roundedCorners, self.style.roundedCorners)
 
-    -- Draw title
-    local titleFont = ResourceManager:getFont(self.style.titleFont, self.style.titleFontSize)
-    love.graphics.setFont(titleFont)
-    love.graphics.setColor(unpack(self.style.titleColor))
-    love.graphics.printf(self.title, x + self.style.padding, y + self.style.padding,
-            menuWidth - self.style.padding * 2, "center")
+    -- Draw title if there is one
+    if self.title and #self.title > 0 then
+        local titleFont = ResourceManager:getFont(self.style.titleFont, self.style.titleFontSize)
+        love.graphics.setFont(titleFont)
+        love.graphics.setColor(unpack(self.style.titleColor))
+        love.graphics.printf(self.title, x + self.style.padding, y + self.style.padding,
+                menuWidth - self.style.padding * 2, "center")
+
+        -- Adjust y position for items to come after title
+        y = y + self.style.padding + self.style.titleFontSize
+    end
 
     -- Draw menu items
     local itemFont = ResourceManager:getFont(self.style.itemFont, self.style.itemFontSize)
     love.graphics.setFont(itemFont)
 
-    local itemY = y + self.style.padding * 2 + self.style.titleFontSize
+    local itemY = y + self.style.padding
 
     for i = 1 + self.scrollOffset, math.min(#self.items, self.scrollOffset + self.maxVisible) do
         local item = self.items[i]
@@ -325,14 +355,14 @@ function MenuBuilder:draw()
 
     -- Draw scrollbar if needed
     if #self.items > self.maxVisible then
-        local scrollbarHeight = menuHeight - self.style.padding * 2 - self.style.titleFontSize - self.style.padding
+        local scrollbarHeight = menuHeight - self.style.padding * 2
         local scrollbarThumbHeight = scrollbarHeight * (self.maxVisible / #self.items)
-        local scrollbarThumbY = y + self.style.padding * 2 + self.style.titleFontSize + self.style.padding +
+        local scrollbarThumbY = y + self.style.padding +
                 (scrollbarHeight - scrollbarThumbHeight) * (self.scrollOffset / (#self.items - self.maxVisible))
 
         -- Draw scrollbar track
         love.graphics.setColor(0.2, 0.2, 0.2, 1)
-        love.graphics.rectangle("fill", x + menuWidth - 10, y + self.style.padding * 2 + self.style.titleFontSize + self.style.padding,
+        love.graphics.rectangle("fill", x + menuWidth - 10, y + self.style.padding,
                 5, scrollbarHeight)
 
         -- Draw scrollbar thumb

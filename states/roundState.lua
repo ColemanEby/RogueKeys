@@ -1,9 +1,10 @@
 -- states/roundState.lua
--- Simplified round state with minimal dependencies for debugging
+-- Enhanced round state with proper stats tracking
 
 local StateManager = require("engine/stateManager")
 local TypingTrainer = require("modules/typing/trainer")
 local TextGenerator = require("modules/typing/textGenerator")
+local PlayerModel = require("modules/player/playerModel")
 
 local RoundState = {
     name = "RoundState"
@@ -11,6 +12,7 @@ local RoundState = {
 
 -- Local variables
 local trainer = nil
+local player = nil
 local roundStats = nil
 local sampleText = "The quick brown fox jumps over the lazy dog."
 
@@ -18,12 +20,19 @@ local sampleText = "The quick brown fox jumps over the lazy dog."
 function RoundState.enter()
     print("RoundState: Entered")
 
+    -- Load player data
+    player = player or PlayerModel.load()
+
+    -- Start player session tracking
+    player:startSession()
+
     -- Create typing trainer with sample text if text generator fails
     local text = nil
 
-    -- Try to get text from generator
+    -- Try to get text from generator with appropriate difficulty
+    local difficulty = player:getCurrentDifficulty()
     local success, result = pcall(function()
-        return TextGenerator:getRandomText("medium")
+        return TextGenerator:getRandomText(difficulty)
     end)
 
     if success and result then
@@ -33,30 +42,37 @@ function RoundState.enter()
         text = sampleText
     end
 
-    -- Create a simple trainer with minimal dependencies
-    trainer = {
+    -- Create typing trainer with proper callbacks
+    trainer = TypingTrainer.new({
         text = text,
-        typed = {},
-        finished = false,
-        correctCount = 0,
-        mistakes = 0,
-        score = 0,
-        startTime = love.timer.getTime(),
-        cursorPosition = 1,
-        cursorVisible = true,
-        cursorBlinkTimer = 0
-    }
+        difficulty = difficulty,
+        displayName = "Round " .. player.currentRound,
+        keyboardModel = player.keyboard,
+        onComplete = function(stats)
+            -- Calculate money earned based on score
+            local moneyEarned = math.floor(stats.score * 0.5)
+            stats.moneyEarned = moneyEarned
+
+            -- Record session stats to player model
+            player:endSession(stats)
+
+            -- Add money to player
+            player:addMoney(moneyEarned)
+
+            -- Save player data
+            player:save()
+
+            -- Store round stats for potential progress screen
+            roundStats = stats
+        end
+    })
 end
 
 -- Update the round state
 function RoundState.update(dt)
-    -- Update cursor blink
+    -- Update trainer animations
     if trainer then
-        trainer.cursorBlinkTimer = (trainer.cursorBlinkTimer or 0) + dt
-        if trainer.cursorBlinkTimer >= 0.5 then
-            trainer.cursorBlinkTimer = trainer.cursorBlinkTimer - 0.5
-            trainer.cursorVisible = not trainer.cursorVisible
-        end
+        trainer:update(dt)
     end
 end
 
@@ -75,70 +91,8 @@ function RoundState.draw()
         return
     end
 
-    -- Draw title
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf("Typing Trainer", 0, 50, screenWidth, "center")
-
-    -- Draw the typing text
-    local textY = 150
-    local textAreaWidth = screenWidth - 100
-    local padding = 20
-
-    -- Draw text area background
-    love.graphics.setColor(0.2, 0.2, 0.2)
-    love.graphics.rectangle("fill", 50, textY, textAreaWidth, 100, 5, 5)
-
-    -- Draw text with highlighting
-    love.graphics.setColor(1, 1, 1)
-    local font = love.graphics.getFont()
-    local x = 50 + padding
-    local y = textY + padding
-
-    for i = 1, #trainer.text do
-        local char = trainer.text:sub(i, i)
-        local color = {1, 1, 1} -- Default white
-
-        -- Color based on typing status
-        if i <= #trainer.typed then
-            if trainer.typed[i] == char then
-                color = {0, 1, 0} -- Correct: green
-            else
-                color = {1, 0, 0} -- Incorrect: red
-            end
-        end
-
-        -- Draw character
-        love.graphics.setColor(unpack(color))
-        love.graphics.print(char, x, y)
-
-        -- Draw cursor
-        if i == trainer.cursorPosition and trainer.cursorVisible and not trainer.finished then
-            love.graphics.setColor(0, 0.7, 1)
-            love.graphics.rectangle("fill", x, y, 2, font:getHeight())
-        end
-
-        x = x + font:getWidth(char)
-
-        -- Wrap text if needed
-        if x > 50 + textAreaWidth - padding * 2 then
-            x = 50 + padding
-            y = y + font:getHeight() * 1.5
-        end
-    end
-
-    -- Draw stats
-    love.graphics.setColor(1, 1, 1)
-    local statsY = textY + 120
-    love.graphics.printf("Correct: " .. trainer.correctCount .. " | Mistakes: " .. trainer.mistakes, 0, statsY, screenWidth, "center")
-
-    -- Draw instructions
-    if trainer.finished then
-        love.graphics.setColor(1, 1, 0)
-        love.graphics.printf("Press Enter to continue or Escape to return to menu", 0, statsY + 40, screenWidth, "center")
-    end
-
-    -- Reset color
-    love.graphics.setColor(1, 1, 1)
+    -- Draw the typing trainer interface
+    trainer:draw(50, 50, screenWidth - 100, screenHeight - 100)
 end
 
 -- Handle keyboard input
@@ -148,28 +102,28 @@ function RoundState.keypressed(key)
     if not trainer.finished then
         if key == "backspace" then
             -- Handle backspace
-            if #trainer.typed > 0 then
-                local lastChar = trainer.text:sub(#trainer.typed, #trainer.typed)
-                local typedChar = trainer.typed[#trainer.typed]
-
-                if typedChar == lastChar then
-                    trainer.correctCount = trainer.correctCount - 1
-                else
-                    trainer.mistakes = trainer.mistakes - 1
-                end
-
-                table.remove(trainer.typed)
-                trainer.cursorPosition = #trainer.typed + 1
-            end
+            trainer:backspace()
         elseif key == "escape" then
-            -- Finish early
-            trainer.finished = true
+            -- Finish early and return to menu
+            trainer:finish()
         end
     else
         -- Handle post-completion navigation
         if key == "return" or key == "kpenter" then
-            -- Go back to menu for now
-            StateManager.switch("menuState")
+            -- Check if player advanced to next round
+            if roundStats then
+                local advanced = player:advanceRound(roundStats.score)
+                if advanced then
+                    -- Proceed to next round
+                    StateManager.switch("roundState")
+                else
+                    -- Go to shop
+                    StateManager.switch("shopState")
+                end
+            else
+                -- Default to menu if no stats
+                StateManager.switch("menuState")
+            end
         elseif key == "escape" then
             StateManager.switch("menuState")
         end
@@ -179,27 +133,7 @@ end
 -- Handle text input for typing
 function RoundState.textinput(text)
     if not trainer or trainer.finished then return end
-
-    local expectedChar = trainer.text:sub(trainer.cursorPosition, trainer.cursorPosition)
-
-    -- Store the typed character
-    trainer.typed[trainer.cursorPosition] = text
-
-    -- Check if correct
-    if text == expectedChar then
-        trainer.correctCount = trainer.correctCount + 1
-        trainer.score = trainer.score + 1
-    else
-        trainer.mistakes = trainer.mistakes + 1
-    end
-
-    -- Move cursor
-    trainer.cursorPosition = trainer.cursorPosition + 1
-
-    -- Check if completed
-    if trainer.cursorPosition > #trainer.text then
-        trainer.finished = true
-    end
+    trainer:handleInput(text)
 end
 
 return RoundState

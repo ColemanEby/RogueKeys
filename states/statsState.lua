@@ -1,5 +1,5 @@
 -- states/statsState.lua
--- Improved stats state with visualizations
+-- Improved stats state with visualizations and fixed menu positioning
 
 local StateManager = require("engine/stateManager")
 local ResourceManager = require("engine/resourceManager")
@@ -20,10 +20,16 @@ function StatsState.enter()
     -- Get player data
     player = player or PlayerModel.load()
 
-    -- Create back button menu
+    -- Create back button menu with proper positioning and styling
+    StatsState.createBackMenu()
+end
+
+-- Create back menu with proper positioning
+function StatsState.createBackMenu()
     backMenu = MenuBuilder.new("", {
         backgroundColor = {0.1, 0.1, 0.2, 0.8},
-        width = 200
+        width = 200,
+        titleFontSize = 18
     })
 
     backMenu:addButton("Back to Main Menu", function()
@@ -111,10 +117,24 @@ function StatsState.draw()
         StatsState.drawEconomyStats(50, panelY, screenWidth - 100, panelHeight)
     end
 
-    -- Draw back menu
+    -- Draw back menu at the BOTTOM of the screen (fixed positioning)
+    -- Calculate position explicitly instead of letting menu center itself
+    local menuX = (screenWidth - 200) / 2  -- 200 is the menu width defined above
+    local menuY = screenHeight - 70        -- Position from bottom
+
+    -- Save the current transform
+    love.graphics.push()
+
+    -- Set absolute position for the menu
+    love.graphics.translate(menuX, menuY)
+
+    -- Draw the menu
     if backMenu then
         backMenu:draw()
     end
+
+    -- Restore transform
+    love.graphics.pop()
 
     -- Reset color
     love.graphics.setColor(1, 1, 1, 1)
@@ -413,6 +433,16 @@ function StatsState.mousepressed(x, y, button)
                     x <= tabStartX + (tabWidth + tabSpacing) * 2 + tabWidth then
                 currentTab = "economy"
             end
+        end
+
+        -- Check if back menu was clicked
+        local screenHeight = love.graphics.getHeight()
+        local menuX = (screenWidth - 200) / 2
+        local menuY = screenHeight - 70
+
+        -- Simple check if click is in menu area
+        if x >= menuX and x <= menuX + 200 and y >= menuY and y <= menuY + 40 then
+            StateManager.switch("menuState")
         end
     end
 end
