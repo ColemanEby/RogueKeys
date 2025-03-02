@@ -54,6 +54,37 @@ function love.load()
     -- Disable key repeat to prevent multiple keypresses
     love.keyboard.setKeyRepeat(false)
 
+    -- Initialize file management system
+    print("Setting up file management system...")
+    local FileManager
+    local success, err = pcall(function()
+        FileManager = require("modules/util/fileManager")
+        FileManager.init()
+        
+        -- Print debug info about file system
+        FileManager.printFileSystemInfo()
+    end)
+
+    if not success then
+        print("ERROR initializing file management: " .. tostring(err))
+        -- Create a fallback implementation to prevent further errors
+        FileManager = {
+            init = function() return false end,
+            ensureDirectoryExists = function(dir) 
+                return love.filesystem.createDirectory(dir) 
+            end,
+            saveToFile = function(path, data) 
+                return love.filesystem.write(path, data) 
+            end,
+            loadFromFile = function(path) 
+                return love.filesystem.read(path) 
+            end,
+            printFileSystemInfo = function() 
+                print("File system info not available") 
+            end
+        }
+    end
+
     -- Start with a loading message
     print("=== Starting Typing Trainer Roguelike ===")
 
@@ -239,10 +270,69 @@ function love.resize(w, h)
 end
 
 function love.quit()
+    -- Final file system diagnostic check before quitting
+    if FileManager then
+        print("Performing final file system check...")
+        FileManager.printFileSystemInfo()
+    end
     -- Save configuration before quitting
     local success, err = pcall(function() ConfigManager:saveAllConfigs() end)
     if not success then
         print("ERROR saving configs: " .. tostring(err))
     end
     return false
+end
+
+-- Snippet to add to main.lua to integrate the stat tracking debugging system
+
+-- Add the DEBUG_MODE as a global variable so it can be accessed everywhere
+_G.DEBUG_MODE = true
+
+-- Add this right after the "Loading engine modules..." message in love.load()
+-- to initialize our stat tracking integration
+
+-- Initialize stat tracking integration
+print("Initializing stat tracking system...")
+local success, err = pcall(function()
+    local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+    StatTrackingIntegration.init()
+    
+    -- Verify system integrity if in debug mode
+    if _G.DEBUG_MODE then
+        print("Running stat tracking verification...")
+        StatTrackingIntegration.verifySystem()
+    end
+end)
+
+if not success then
+    print("ERROR initializing stat tracking: " .. tostring(err))
+end
+
+-- Add a debug key handler to the love.keypressed function
+-- Add this inside the existing keypressed function:
+
+-- Debug commands for stats testing/verification
+if _G.DEBUG_MODE then
+    if key == "f2" then
+        print("--- STATS DEBUG INFO ---")
+        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+        local debugInfo = StatTrackingIntegration.getDebugInfo()
+        
+        for k, v in pairs(debugInfo) do
+            print(k .. ": " .. tostring(v))
+        end
+        
+        -- Verify saved stats
+        local StatVerifier = require("modules/util/statVerifier")
+        StatVerifier.verifySavedStats()
+        
+        return
+    elseif key == "f3" then
+        -- Reset stats (for testing)
+        print("--- RESETTING STATS ---")
+        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+        local success = StatTrackingIntegration.resetStats()
+        print("Stats reset: " .. (success and "Success" or "Failed"))
+        return
+    end
 end

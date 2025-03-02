@@ -1,6 +1,10 @@
 -- engine/configManager.lua
 -- Centralized configuration management with file-based persistence
 
+-- Add this at the top of the file
+local FileManager = require("modules/util/fileManager")
+
+
 local ConfigManager = {
     configs = {},
     defaultConfigs = {
@@ -118,13 +122,27 @@ local function mergeTable(target, source)
     return target
 end
 
--- Initialize configs with defaults
+-- Add this to the init function at the end
 function ConfigManager:init()
     self.configs = deepCopy(self.defaultConfigs)
+    
+    -- Initialize the FileManager
+    FileManager.init()
+    
+    -- Now load configs
     self:loadAllConfigs()
+    
+    -- If this is the first run, save the default configs
+    for configName, _ in pairs(self.defaultConfigs) do
+        if not love.filesystem.getInfo("config/" .. configName .. ".lua") then
+            self:saveConfig(configName)
+        end
+    end
+    
+    print("ConfigManager: Initialization complete")
 end
 
--- Save a specific config to file
+-- Replace the saveConfig function with this version
 function ConfigManager:saveConfig(configName)
     if not self.configs[configName] then
         print("ConfigManager: No config named '" .. configName .. "' to save")
@@ -136,41 +154,39 @@ function ConfigManager:saveConfig(configName)
     -- Convert config to serialized Lua
     local serialized = "return " .. self:serializeTable(self.configs[configName])
 
-    -- Create config directory if it doesn't exist
-    if not love.filesystem.getInfo("config") then
-        love.filesystem.createDirectory("config")
-    end
-
-    -- Write to file
-    local success, message = love.filesystem.write(configPath, serialized)
+    -- Save using FileManager
+    local success = FileManager.saveToFile(configPath, serialized)
+    
     if success then
         print("ConfigManager: Saved config '" .. configName .. "'")
         return true
     else
-        print("ConfigManager: Failed to save config '" .. configName .. "': " .. tostring(message))
+        print("ConfigManager: Failed to save config '" .. configName .. "'")
         return false
     end
 end
 
--- Load a specific config from file
+-- Replace the loadConfig function with this version
 function ConfigManager:loadConfig(configName)
     local configPath = "config/" .. configName .. ".lua"
 
-    -- Check if file exists
-    if not love.filesystem.getInfo(configPath) then
-        print("ConfigManager: Config file '" .. configPath .. "' not found, using defaults")
+    -- Load using FileManager
+    local content, error = FileManager.loadFromFile(configPath)
+    
+    if not content then
+        print("ConfigManager: Config file '" .. configPath .. "' not found or couldn't be loaded, using defaults")
         return false
     end
 
-    -- Try to load the file
-    local success, chunk = pcall(love.filesystem.load, configPath)
-    if not success then
-        print("ConfigManager: Error loading config file '" .. configPath .. "': " .. tostring(chunk))
+    -- Try to load the file as Lua code
+    local func, err = load(content)
+    if not func then
+        print("ConfigManager: Error parsing config file '" .. configPath .. "': " .. tostring(err))
         return false
     end
 
     -- Try to execute the chunk to get the config table
-    local success, config = pcall(chunk)
+    local success, config = pcall(func)
     if not success then
         print("ConfigManager: Error executing config file '" .. configPath .. "': " .. tostring(config))
         return false
@@ -193,29 +209,28 @@ function ConfigManager:loadConfig(configName)
     return true
 end
 
--- Load all config files
+-- Replace the loadAllConfigs function with this version
 function ConfigManager:loadAllConfigs()
-    -- Create config directory if it doesn't exist
-    if not love.filesystem.getInfo("config") then
-        love.filesystem.createDirectory("config")
-        self:saveAllConfigs() -- Create default configs
-        return
-    end
-
+    -- Ensure config directory exists
+    FileManager.ensureDirectoryExists("config")
+    
     -- Load all default configs first
     for configName, _ in pairs(self.defaultConfigs) do
         self:loadConfig(configName)
     end
 
-    -- Load any additional configs in the directory
-    local files = love.filesystem.getDirectoryItems("config")
-    for _, file in ipairs(files) do
-        local configName = file:match("^(.+)%.lua$")
-        if configName and not self.configs[configName] then
-            self:loadConfig(configName)
+    -- Try to load any additional config files that might exist
+    if love.filesystem.getInfo("config") then
+        local files = love.filesystem.getDirectoryItems("config")
+        for _, file in ipairs(files) do
+            local configName = file:match("^(.+)%.lua$")
+            if configName and not self.configs[configName] then
+                self:loadConfig(configName)
+            end
         end
     end
 end
+
 
 -- Save all configs to files
 function ConfigManager:saveAllConfigs()
@@ -317,5 +332,7 @@ function ConfigManager:serializeTable(tbl, indent)
     result = result .. string.rep("    ", indent) .. "}"
     return result
 end
+
+
 
 return ConfigManager

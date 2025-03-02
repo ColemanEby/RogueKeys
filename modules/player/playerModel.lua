@@ -1,8 +1,10 @@
 -- modules/player/playerModel.lua
--- Enhanced player model with progression and statistics tracking
-
-local KeyboardModel = require("modules/keyboard/keyboardModel")
+-- Add required modules at the top
+local FileManager = require("modules/util/fileManager")
 local ConfigManager = require("engine/configManager")
+local KeyboardModel = require("modules/keyboard/keyboardModel")
+
+-- Fix for the PlayerModel class to ensure proper stats persistence
 
 local PlayerModel = {}
 PlayerModel.__index = PlayerModel
@@ -49,11 +51,15 @@ end
 function PlayerModel:startSession()
     self.isInSession = true
     self.sessionStartTime = love.timer.getTime()
+    print("PlayerModel: Started new session")
 end
 
 -- End the current session and record stats
 function PlayerModel:endSession(sessionStats)
-    if not self.isInSession then return end
+    if not self.isInSession then 
+        print("PlayerModel: Warning - endSession called when not in session")
+        return 
+    end
 
     self.isInSession = false
     local sessionTime = love.timer.getTime() - self.sessionStartTime
@@ -64,48 +70,69 @@ function PlayerModel:endSession(sessionStats)
 
     -- Add session-specific stats if provided
     if sessionStats then
+        print("PlayerModel: Recording session stats")
+        
+        -- Update keystroke stats
         self.stats.totalKeystrokes = self.stats.totalKeystrokes + (sessionStats.keystrokes or 0)
         self.stats.totalMistakes = self.stats.totalMistakes + (sessionStats.mistakes or 0)
         self.stats.totalCorrect = self.stats.totalCorrect + (sessionStats.correct or 0)
 
+        -- Log what we're recording for debugging
+        print("PlayerModel: Keystrokes: " .. (sessionStats.keystrokes or 0) .. 
+              ", Mistakes: " .. (sessionStats.mistakes or 0) .. 
+              ", Correct: " .. (sessionStats.correct or 0))
+
         -- Update best values
         if sessionStats.apm and sessionStats.apm > self.stats.bestAPM then
             self.stats.bestAPM = sessionStats.apm
+            print("PlayerModel: New best APM: " .. self.stats.bestAPM)
         end
 
         if sessionStats.wpm and sessionStats.wpm > self.stats.bestWPM then
             self.stats.bestWPM = sessionStats.wpm
+            print("PlayerModel: New best WPM: " .. self.stats.bestWPM)
         end
 
         if sessionStats.accuracy and sessionStats.accuracy > self.stats.bestAccuracy then
             self.stats.bestAccuracy = sessionStats.accuracy
+            print("PlayerModel: New best accuracy: " .. self.stats.bestAccuracy)
         end
 
         if sessionStats.longestStreak and sessionStats.longestStreak > self.stats.bestStreak then
             self.stats.bestStreak = sessionStats.longestStreak
+            print("PlayerModel: New best streak: " .. self.stats.bestStreak)
         end
 
         -- Check for perfect round
         if sessionStats.mistakes == 0 and sessionStats.keystrokes > 0 then
             self.stats.roundsWithoutError = self.stats.roundsWithoutError + 1
             self.stats.perfectRounds = self.stats.perfectRounds + 1
+            print("PlayerModel: Perfect round achieved!")
         end
 
         -- Record money earned
         if sessionStats.moneyEarned then
             self.stats.moneyEarned = self.stats.moneyEarned + sessionStats.moneyEarned
-            self.totalMoney = self.totalMoney + sessionStats.moneyEarned
+            print("PlayerModel: Money earned: " .. sessionStats.moneyEarned)
         end
+    else
+        print("PlayerModel: Warning - No session stats provided")
     end
 
-    -- Save player data
-    self:save()
+    -- Save player data immediately after updating stats
+    local saveSuccess = self:save()
+    print("PlayerModel: Session stats saved: " .. (saveSuccess and "Success" or "Failed"))
+    
+    return saveSuccess
 end
 
 -- Add money to the player's total
 function PlayerModel:addMoney(amount)
+    if amount <= 0 then return self.totalMoney end
+    
     self.totalMoney = self.totalMoney + amount
     self.stats.moneyEarned = self.stats.moneyEarned + amount
+    print("PlayerModel: Added " .. amount .. " money, total now: " .. self.totalMoney)
     return self.totalMoney
 end
 
@@ -114,8 +141,10 @@ function PlayerModel:spendMoney(amount)
     if self.totalMoney >= amount then
         self.totalMoney = self.totalMoney - amount
         self.stats.moneySpent = self.stats.moneySpent + amount
+        print("PlayerModel: Spent " .. amount .. " money, remaining: " .. self.totalMoney)
         return true
     end
+    print("PlayerModel: Not enough money to spend " .. amount)
     return false
 end
 
@@ -123,6 +152,7 @@ end
 function PlayerModel:changeKeyboard(keyboardLayout)
     self.selectedKeyboardLayout = keyboardLayout
     self.keyboard = KeyboardModel.new(keyboardLayout)
+    print("PlayerModel: Changed keyboard to " .. keyboardLayout)
     return self.keyboard
 end
 
@@ -140,12 +170,16 @@ function PlayerModel:advanceRound(score)
 
     if score >= requiredScore then
         self.currentRound = self.currentRound + 1
+        print("PlayerModel: Advanced to round " .. self.currentRound)
 
         -- Update max round reached
         if self.currentRound > self.maxRoundReached then
             self.maxRoundReached = self.currentRound
+            print("PlayerModel: New max round reached: " .. self.maxRoundReached)
         end
 
+        -- Save after advancing
+        self:save()
         return true
     end
 
@@ -155,6 +189,8 @@ end
 -- Reset progress (e.g., after game over)
 function PlayerModel:resetProgress()
     self.currentRound = 1
+    print("PlayerModel: Progress reset")
+    self:save()
     return self.currentRound
 end
 
@@ -174,7 +210,7 @@ function PlayerModel:getStats()
     return self.stats
 end
 
--- Save player data to file
+-- Replace the save method with this version
 function PlayerModel:save()
     local data = {
         totalMoney = self.totalMoney,
@@ -188,40 +224,44 @@ function PlayerModel:save()
 
     local serialized = "return " .. self:serializeTable(data)
 
-    -- Create save directory if it doesn't exist
-    if not love.filesystem.getInfo("save") then
-        love.filesystem.createDirectory("save")
-    end
-
-    -- Write to file
-    local success, message = love.filesystem.write("save/player.lua", serialized)
+    -- Ensure save directory exists and save using FileManager
+    FileManager.ensureDirectoryExists("save")
+    local success = FileManager.saveToFile("save/player.lua", serialized)
+    
     if not success then
-        print("PlayerModel: Failed to save player data: " .. tostring(message))
+        print("PlayerModel: Failed to save player data")
         return false
     end
 
+    print("PlayerModel: Successfully saved player data")
+    
+    -- Debug print stats that were saved
+    print("PlayerModel: Saved stats - Total sessions: " .. self.stats.totalSessions .. 
+          ", Total keystrokes: " .. self.stats.totalKeystrokes)
+          
     return true
 end
 
--- Load player data from file
 function PlayerModel.load()
     local dataPath = "save/player.lua"
-
-    -- Check if file exists
-    if not love.filesystem.getInfo(dataPath) then
-        print("PlayerModel: No save data found, creating new player")
+    
+    -- Load data using FileManager
+    local content, error = FileManager.loadFromFile(dataPath)
+    
+    if not content then
+        print("PlayerModel: No save data found or couldn't be loaded, creating new player")
         return PlayerModel.new()
     end
 
-    -- Try to load the file
-    local success, chunk = pcall(love.filesystem.load, dataPath)
-    if not success then
-        print("PlayerModel: Error loading save file: " .. tostring(chunk))
+    -- Parse the Lua code
+    local func, err = load(content)
+    if not func then
+        print("PlayerModel: Error parsing save file: " .. tostring(err))
         return PlayerModel.new()
     end
 
-    -- Try to execute the chunk to get the data table
-    local success, data = pcall(chunk)
+    -- Execute the function to get the data table
+    local success, data = pcall(func)
     if not success then
         print("PlayerModel: Error executing save file: " .. tostring(data))
         return PlayerModel.new()
@@ -230,7 +270,7 @@ function PlayerModel.load()
     -- Create a new player model
     local player = PlayerModel.new()
 
-    -- Apply saved data
+    -- Apply saved data with safety checks
     player.totalMoney = data.totalMoney or player.totalMoney
     player.level = data.level or player.level
     player.currentRound = data.currentRound or player.currentRound
@@ -242,7 +282,7 @@ function PlayerModel.load()
         player.keyboard = KeyboardModel.deserialize(data.keyboard)
     end
 
-    -- Load stats
+    -- Load stats with safety checks
     if data.stats then
         for k, v in pairs(data.stats) do
             player.stats[k] = v
@@ -250,6 +290,11 @@ function PlayerModel.load()
     end
 
     print("PlayerModel: Loaded player data")
+    
+    -- Debug print loaded stats
+    print("PlayerModel: Loaded stats - Total sessions: " .. player.stats.totalSessions .. 
+          ", Total keystrokes: " .. player.stats.totalKeystrokes)
+          
     return player
 end
 

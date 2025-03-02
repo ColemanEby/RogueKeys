@@ -5,10 +5,90 @@ local StateManager = require("engine/stateManager")
 local ResourceManager = require("engine/resourceManager")
 local PlayerModel = require("modules/player/playerModel")
 local MenuBuilder = require("modules/ui/menuBuilder")
+-- Add this to the beginning of the file after the includes
+local StatVerifier = require("modules/util/statVerifier")
 
 local StatsState = {
     name = "StatsState"
 }
+
+-- Update the getAccuracy helper to handle missing or zero values correctly
+function getAccuracy(stats)
+    local totalCorrect = stats.totalCorrect or 0
+    local totalMistakes = stats.totalMistakes or 0
+    local total = totalCorrect + totalMistakes
+    
+    if total <= 0 then return 0 end
+    return (totalCorrect / total) * 100
+end
+
+-- Update the getSavingsRate helper to handle missing or zero values correctly
+function getSavingsRate(stats)
+    local totalEarned = stats.moneyEarned or 0
+    if totalEarned <= 0 then return 0 end
+
+    local moneySpent = stats.moneySpent or 0
+    local savingsRate = ((totalEarned - moneySpent) / totalEarned) * 100
+    return math.max(0, savingsRate)
+end
+
+-- Update the countUpgrades function to be more robust
+function countUpgrades(upgrades)
+    if not upgrades then return 0 end
+
+    local count = 0
+    for _, _ in pairs(upgrades) do
+        count = count + 1
+    end
+
+    return count
+end
+
+
+-- Add a helper function to format time
+function formatTime(seconds)
+    if not seconds or seconds < 0 then
+        return "0m 0s"
+    end
+
+    local minutes = math.floor(seconds / 60)
+    local remainingSeconds = math.floor(seconds % 60)
+
+    if minutes >= 60 then
+        local hours = math.floor(minutes / 60)
+        minutes = minutes % 60
+        return string.format("%dh %dm %ds", hours, minutes, remainingSeconds)
+    else
+        return string.format("%dm %ds", minutes, remainingSeconds)
+    end
+end
+
+
+
+-- Safe version of getAccuracy function that can handle nil values
+local function safeGetAccuracy(stats)
+    if not stats then return 0 end
+    
+    local totalCorrect = stats.totalCorrect or 0
+    local totalMistakes = stats.totalMistakes or 0
+    local total = totalCorrect + totalMistakes
+    
+    if total <= 0 then return 0 end
+    return (totalCorrect / total) * 100
+end
+
+-- Safe version of countUpgrades function that can handle nil values
+local function safeCountUpgrades(upgrades)
+    if not upgrades then return 0 end
+
+    local count = 0
+    for _, _ in pairs(upgrades) do
+        count = count + 1
+    end
+
+    return count
+end
+
 
 -- Local variables
 local player = nil
@@ -17,13 +97,33 @@ local currentTab = "overall"  -- "overall", "typing", "economy"
 
 -- Initialize the stats state
 function StatsState.enter()
-    -- Get player data
-    player = player or PlayerModel.load()
+    print("StatsState: Entered")
+    
+    -- Try to load player data in a protected call to handle errors
+    local success, result = pcall(function()
+        return PlayerModel.load()
+    end)
+    
+    if success and result then
+        player = result
+        print("StatsState: Successfully loaded player data")
+    else
+        -- Create a new player if loading fails
+        print("StatsState: Failed to load player data, creating new player")
+        player = PlayerModel.new()
+    end
+
+    -- Verify stats are loaded correctly (only in debug mode)
+    if _G and _G.DEBUG_MODE then
+        print("StatsState: Verifying stat loading")
+        pcall(function() 
+            StatVerifier.verifySavedStats() 
+        end)
+    end
 
     -- Create back button menu with proper positioning and styling
     StatsState.createBackMenu()
 end
-
 -- Create back menu with proper positioning
 function StatsState.createBackMenu()
     backMenu = MenuBuilder.new("", {
@@ -51,7 +151,7 @@ function StatsState.update(dt)
     end
 end
 
--- Draw the stats state
+-- Update the draw function to handle nil player
 function StatsState.draw()
     -- Draw background
     love.graphics.clear(0.12, 0.12, 0.15)
@@ -73,6 +173,27 @@ function StatsState.draw()
     local tabSpacing = 10
     local totalTabWidth = tabWidth * 3 + tabSpacing * 2
     local tabStartX = (screenWidth - totalTabWidth) / 2
+
+    -- If player is nil, display an error message and return
+    if not player then
+        love.graphics.setColor(1, 0.3, 0.3)
+        love.graphics.printf("Error: Unable to load player data", 0, screenHeight / 2, screenWidth, "center")
+        
+        -- Draw back menu to allow user to return
+        if backMenu then
+            -- Calculate position for the menu
+            local menuX = (screenWidth - 200) / 2  -- 200 is the menu width defined above
+            local menuY = screenHeight - 70        -- Position from bottom
+
+            -- Save the current transform
+            love.graphics.push()
+            love.graphics.translate(menuX, menuY)
+            backMenu:draw()
+            love.graphics.pop()
+        end
+        
+        return
+    end
 
     -- Helper function to draw a tab
     local function drawTab(text, x, selected)
@@ -140,24 +261,34 @@ function StatsState.draw()
     love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Draw overall stats
+
+-- Update drawOverallStats to handle nil player
 function StatsState.drawOverallStats(x, y, width, height)
-    local stats = player:getStats()
+    if not player then return end
+    
+    local stats = player:getStats() or {}
 
     -- Set font
     local font = ResourceManager:getFont("default", 18)
     love.graphics.setFont(font)
+    
+    -- Add debug info section to verify stats are loaded
+    if _G and _G.DEBUG_MODE then
+        love.graphics.setColor(1, 1, 0)
+        love.graphics.printf("DEBUG INFO - Stats Loaded", x + 10, y + 10, width - 20, "center")
+    end
 
     -- Stats to display
     local statItems = {
-        { label = "Total Play Time", value = formatTime(stats.totalPlayTime) },
-        { label = "Total Sessions", value = stats.totalSessions },
-        { label = "Current Round", value = player.currentRound },
-        { label = "Max Round Reached", value = player.maxRoundReached },
-        { label = "Perfect Rounds", value = stats.perfectRounds },
-        { label = "Current Money", value = player.totalMoney },
-        { label = "Current Keyboard", value = player.keyboard.name },
-        { label = "Keyboard Upgrades", value = countUpgrades(player.keyboard.upgrades) }
+        { label = "Total Play Time", value = formatTime(stats.totalPlayTime or 0) },
+        { label = "Total Sessions", value = stats.totalSessions or 0 },
+        { label = "Total Keystrokes", value = stats.totalKeystrokes or 0 },
+        { label = "Current Round", value = player.currentRound or 1 },
+        { label = "Max Round Reached", value = player.maxRoundReached or 1 },
+        { label = "Perfect Rounds", value = stats.perfectRounds or 0 },
+        { label = "Current Money", value = player.totalMoney or 0 },
+        { label = "Current Keyboard", value = (player.keyboard and player.keyboard.name) or "QWERTY" },
+        { label = "Keyboard Upgrades", value = safeCountUpgrades(player.keyboard and player.keyboard.upgrades) }
     }
 
     -- Draw stats in a grid layout
@@ -168,6 +299,11 @@ function StatsState.drawOverallStats(x, y, width, height)
 
     local startX = x + padding
     local startY = y + padding
+    
+    -- Adjust startY if debug mode is active
+    if _G and _G.DEBUG_MODE then
+        startY = startY + 30
+    end
 
     for i, item in ipairs(statItems) do
         local col = (i - 1) % itemsPerRow
@@ -189,9 +325,20 @@ function StatsState.drawOverallStats(x, y, width, height)
         local valueX = itemX + itemWidth - font:getWidth(valueText) - 10
         love.graphics.print(valueText, valueX, itemY + (itemHeight - font:getHeight()) / 2)
     end
+    
+    -- Add a verification button in debug mode
+    if _G and _G.DEBUG_MODE then
+        local buttonY = startY + (math.ceil(#statItems / itemsPerRow) + 1) * (itemHeight + padding)
+        love.graphics.setColor(0.3, 0.6, 0.3, 0.8)
+        love.graphics.rectangle("fill", startX, buttonY, width - padding * 2, itemHeight, 5, 5)
+        
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf("Run Stats Verification", startX, buttonY + (itemHeight - font:getHeight()) / 2, 
+                            width - padding * 2, "center")
+    end
 end
 
--- Draw typing stats
+-- Update the drawing of typing stats to better show troubleshooting info
 function StatsState.drawTypingStats(x, y, width, height)
     local stats = player:getStats()
 
@@ -199,17 +346,23 @@ function StatsState.drawTypingStats(x, y, width, height)
     local font = ResourceManager:getFont("default", 18)
     love.graphics.setFont(font)
 
+    -- Add debug header
+    if _G.DEBUG_MODE then
+        love.graphics.setColor(1, 1, 0)
+        love.graphics.printf("DEBUG INFO - Typing Stats", x + 10, y + 10, width - 20, "center")
+    end
+
     -- Stats to display
     local statItems = {
-        { label = "Total Keystrokes", value = stats.totalKeystrokes },
-        { label = "Total Correct", value = stats.totalCorrect },
-        { label = "Total Mistakes", value = stats.totalMistakes },
+        { label = "Total Keystrokes", value = stats.totalKeystrokes or 0 },
+        { label = "Total Correct", value = stats.totalCorrect or 0 },
+        { label = "Total Mistakes", value = stats.totalMistakes or 0 },
         { label = "Accuracy", value = string.format("%.1f%%", getAccuracy(stats)) },
-        { label = "Best APM", value = string.format("%.1f", stats.bestAPM) },
-        { label = "Best WPM", value = string.format("%.1f", stats.bestWPM) },
-        { label = "Best Accuracy", value = string.format("%.1f%%", stats.bestAccuracy) },
-        { label = "Best Streak", value = stats.bestStreak },
-        { label = "Error-free Rounds", value = stats.roundsWithoutError }
+        { label = "Best APM", value = string.format("%.1f", stats.bestAPM or 0) },
+        { label = "Best WPM", value = string.format("%.1f", stats.bestWPM or 0) },
+        { label = "Best Accuracy", value = string.format("%.1f%%", stats.bestAccuracy or 0) },
+        { label = "Best Streak", value = stats.bestStreak or 0 },
+        { label = "Error-free Rounds", value = stats.roundsWithoutError or 0 }
     }
 
     -- Draw stats in a grid layout
@@ -220,6 +373,11 @@ function StatsState.drawTypingStats(x, y, width, height)
 
     local startX = x + padding
     local startY = y + padding
+    
+    -- Adjust startY if debug mode is active
+    if _G.DEBUG_MODE then
+        startY = startY + 30
+    end
 
     for i, item in ipairs(statItems) do
         local col = (i - 1) % itemsPerRow
@@ -261,6 +419,13 @@ function StatsState.drawTypingStats(x, y, width, height)
     local barWidth = (graphWidth - 40) / barCount
     local barMaxHeight = graphHeight - 50
     local barY = graphY + graphHeight - 20
+
+    -- In debug mode, also add actual accuracy value
+    if _G.DEBUG_MODE then
+        love.graphics.setColor(1, 1, 0)
+        love.graphics.print("Actual accuracy: " .. string.format("%.1f%%", getAccuracy(stats)), 
+                           graphX + 10, graphY + 30)
+    end
 
     for i = 1, barCount do
         -- Simulate some data (in a real implementation, use actual session history)
@@ -408,90 +573,55 @@ function StatsState.textinput(text)
     -- Not needed for stats state
 end
 
--- Handle mouse click for tab selection
+-- Add this to the mousepressed function to handle verification button
+local originalMousepressed = StatsState.mousepressed
 function StatsState.mousepressed(x, y, button)
-    if button == 1 then
-        -- Check if a tab was clicked
-        local tabY = 70
-        local tabWidth = 150
-        local tabHeight = 30
-        local tabSpacing = 10
-        local totalTabWidth = tabWidth * 3 + tabSpacing * 2
+    -- Call the original function first
+    if originalMousepressed then
+        originalMousepressed(x, y, button)
+    end
+    
+    -- Add verification button handling in debug mode
+    if _G.DEBUG_MODE and button == 1 then
         local screenWidth = love.graphics.getWidth()
-        local tabStartX = (screenWidth - totalTabWidth) / 2
-
-        if y >= tabY and y <= tabY + tabHeight then
-            -- Overall tab
-            if x >= tabStartX and x <= tabStartX + tabWidth then
-                currentTab = "overall"
-                -- Typing tab
-            elseif x >= tabStartX + tabWidth + tabSpacing and
-                    x <= tabStartX + tabWidth * 2 + tabSpacing then
-                currentTab = "typing"
-                -- Economy tab
-            elseif x >= tabStartX + (tabWidth + tabSpacing) * 2 and
-                    x <= tabStartX + (tabWidth + tabSpacing) * 2 + tabWidth then
-                currentTab = "economy"
+        local padding = 20
+        
+        if currentTab == "overall" then
+            local panelY = 70 + 30 + 20  -- tabY + tabHeight + padding
+            local statItems = {
+                { label = "Total Play Time" }, { label = "Total Sessions" },
+                { label = "Total Keystrokes" }, { label = "Current Round" },
+                { label = "Max Round Reached" }, { label = "Perfect Rounds" },
+                { label = "Current Money" }, { label = "Current Keyboard" },
+                { label = "Keyboard Upgrades" }
+            }
+            
+            local startX = 50 + padding
+            local startY = panelY + padding
+            
+            -- Adjust startY if debug mode is active
+            if _G.DEBUG_MODE then
+                startY = startY + 30
+            end
+            
+            local itemHeight = 40
+            local itemsPerRow = 2
+            
+            -- Check if the verification button was clicked
+            local buttonY = startY + (math.ceil(#statItems / itemsPerRow) + 1) * (itemHeight + padding)
+            local buttonWidth = screenWidth - 100 - padding * 2
+            
+            if x >= startX and x <= startX + buttonWidth and 
+               y >= buttonY and y <= buttonY + itemHeight then
+                print("StatsState: Running stats verification")
+                local result = StatVerifier.runIntegrationTest()
+                print("StatsState: Verification complete. Result: " .. (result and "PASSED" or "FAILED"))
+                
+                -- Reload player to reflect any new data
+                player = PlayerModel.load()
             end
         end
-
-        -- Check if back menu was clicked
-        local screenHeight = love.graphics.getHeight()
-        local menuX = (screenWidth - 200) / 2
-        local menuY = screenHeight - 70
-
-        -- Simple check if click is in menu area
-        if x >= menuX and x <= menuX + 200 and y >= menuY and y <= menuY + 40 then
-            StateManager.switch("menuState")
-        end
     end
-end
-
--- Helper: Format time in seconds to a readable string
-function formatTime(seconds)
-    if not seconds or seconds < 0 then
-        return "0m 0s"
-    end
-
-    local minutes = math.floor(seconds / 60)
-    local remainingSeconds = math.floor(seconds % 60)
-
-    if minutes >= 60 then
-        local hours = math.floor(minutes / 60)
-        minutes = minutes % 60
-        return string.format("%dh %dm %ds", hours, minutes, remainingSeconds)
-    else
-        return string.format("%dm %ds", minutes, remainingSeconds)
-    end
-end
-
--- Helper: Count the number of keyboard upgrades
-function countUpgrades(upgrades)
-    if not upgrades then return 0 end
-
-    local count = 0
-    for _, _ in pairs(upgrades) do
-        count = count + 1
-    end
-
-    return count
-end
-
--- Helper: Calculate overall accuracy
-function getAccuracy(stats)
-    local total = stats.totalCorrect + stats.totalMistakes
-    if total <= 0 then return 0 end
-
-    return (stats.totalCorrect / total) * 100
-end
-
--- Helper: Calculate savings rate
-function getSavingsRate(stats)
-    local totalEarned = stats.moneyEarned
-    if totalEarned <= 0 then return 0 end
-
-    local savingsRate = ((totalEarned - stats.moneySpent) / totalEarned) * 100
-    return math.max(0, savingsRate)
 end
 
 return StatsState

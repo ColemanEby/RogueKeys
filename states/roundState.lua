@@ -1,3 +1,6 @@
+-- First, let's fix the roundState.lua file to ensure stats are properly passed to the player model
+-- This modified version will ensure session stats are properly saved
+
 -- states/roundState.lua
 -- Enhanced round state with proper stats tracking
 
@@ -59,11 +62,16 @@ function RoundState.enter()
             -- Add money to player
             player:addMoney(moneyEarned)
 
-            -- Save player data
+            -- Save player data - ensure this happens after all updates
             player:save()
 
             -- Store round stats for potential progress screen
             roundStats = stats
+            
+            -- Debug log to verify stats are being saved
+            print("RoundState: Session completed and saved")
+            print("RoundState: Stats - Score: " .. stats.score .. ", Money earned: " .. moneyEarned)
+            print("RoundState: Keystrokes: " .. stats.keystrokes .. ", Accuracy: " .. stats.accuracy)
         end
     })
 end
