@@ -1,5 +1,6 @@
 -- modules/util/statTrackingIntegration.lua
 -- This module integrates all stat-tracking components and provides a high-level API
+-- Enhanced with better error handling and fallbacks
 
 local StatTrackingIntegration = {}
 
@@ -8,10 +9,13 @@ local PlayerModel = nil -- Late-require to avoid circular dependencies
 local TextGenerator = nil
 local TypingTrainer = nil
 local StatVerifier = nil
+local FileManager = nil
 
 -- Flag to track if the module has been initialized
 local initialized = false
 
+-- Flag to track if file system operations are working
+local fileSystemWorking = false
 
 -- Safely require a module and handle errors
 local function safeRequire(modulePath)
@@ -22,7 +26,6 @@ local function safeRequire(modulePath)
     end
     return module
 end
-
 
 -- Initialize the stat tracking system
 function StatTrackingIntegration.init()
@@ -35,6 +38,7 @@ function StatTrackingIntegration.init()
     TextGenerator = safeRequire("modules/typing/textGenerator")
     TypingTrainer = safeRequire("modules/typing/trainer")
     StatVerifier = safeRequire("modules/util/statVerifier")
+    FileManager = safeRequire("modules/util/fileManager")
     
     -- Check if all required dependencies were loaded
     if not PlayerModel or not TextGenerator or not TypingTrainer then
@@ -42,9 +46,56 @@ function StatTrackingIntegration.init()
         return false
     end
     
+    -- Check if file system is working
+    fileSystemWorking = false
+    if FileManager then
+        local testPath = "save/stat_tracking_test.tmp"
+        local success = love.filesystem.write(testPath, "Test file system")
+        if success then
+            fileSystemWorking = true
+            love.filesystem.remove(testPath)
+            print("StatTrackingIntegration: File system checks passed")
+        else
+            print("StatTrackingIntegration: WARNING - File system writes not working, stats may not persist")
+        end
+    end
+    
     print("StatTrackingIntegration: Initialized")
     initialized = true
     return true
+end
+
+-- Test if the file system is working
+function StatTrackingIntegration.verifySystem()
+    if not initialized then
+        StatTrackingIntegration.init()
+    end
+    
+    -- Check file system operations
+    if FileManager then
+        local testPath = "save/stat_verification.tmp"
+        local writeSuccess = love.filesystem.write(testPath, "Verification test")
+        
+        if writeSuccess then
+            love.filesystem.remove(testPath)
+            print("StatTrackingIntegration: File system verification passed")
+            
+            -- Run more detailed verification if StatVerifier is available
+            if StatVerifier then
+                local verifyResult = StatVerifier.runIntegrationTest()
+                print("StatTrackingIntegration: In-depth verification " .. 
+                      (verifyResult and "passed" or "failed"))
+                return verifyResult
+            end
+            
+            return true
+        else
+            print("StatTrackingIntegration: File system verification failed - cannot write files")
+            return false
+        end
+    end
+    
+    return false
 end
 
 -- Create a new training session with proper callbacks for stat tracking
@@ -101,15 +152,19 @@ function StatTrackingIntegration.createTrainingSession(options)
         local moneyEarned = math.floor(stats.score * 0.5)
         stats.moneyEarned = moneyEarned
         
-        -- Record session stats to player model
-        print("StatTrackingIntegration: Updating player model with session stats")
-        
+        -- Record session stats to player model with error handling
         local success, result = pcall(function()
             return player:endSession(stats)
         end)
         
         if not success then
             print("StatTrackingIntegration: Error updating player with session stats: " .. tostring(result))
+            -- Try to handle the error by updating critical stats directly
+            if player and player.stats then
+                player.stats.totalKeystrokes = (player.stats.totalKeystrokes or 0) + (stats.keystrokes or 0)
+                player.stats.totalCorrect = (player.stats.totalCorrect or 0) + (stats.correct or 0)
+                player.stats.totalMistakes = (player.stats.totalMistakes or 0) + (stats.mistakes or 0)
+            end
         end
         
         -- Add money to player
@@ -119,9 +174,13 @@ function StatTrackingIntegration.createTrainingSession(options)
         
         if not success then
             print("StatTrackingIntegration: Error adding money to player: " .. tostring(result))
+            -- Try direct money update if method failed
+            if player then
+                player.totalMoney = (player.totalMoney or 0) + moneyEarned
+            end
         end
         
-        -- Save player data
+        -- Save player data with error handling
         local success, saveSuccess = pcall(function()
             return player:save()
         end)
@@ -138,8 +197,8 @@ function StatTrackingIntegration.createTrainingSession(options)
             pcall(options.onComplete, stats)
         end
         
-        -- Verify stats if in debug mode
-        if _G and _G.DEBUG_MODE and StatVerifier then
+        -- Verify stats if in debug mode and file system is working
+        if _G and _G.DEBUG_MODE and StatVerifier and fileSystemWorking then
             print("StatTrackingIntegration: Verifying stats after session")
             pcall(StatVerifier.verifySavedStats)
         end
@@ -177,33 +236,6 @@ function StatTrackingIntegration.createTrainingSession(options)
     return trainer, player
 end
 
--- Fix the syntax error in the verifySystem function
--- In the previous code, there was a curly brace instead of parenthesis
-
-function StatTrackingIntegration.verifySystem()
-    local initSuccess = StatTrackingIntegration.init()
-    if not initSuccess then
-        print("StatTrackingIntegration: Failed to initialize, cannot verify system")
-        return false
-    end
-    
-    if not StatVerifier then
-        print("StatTrackingIntegration: StatVerifier is not available")
-        return false
-    end  -- This was incorrectly a curly brace instead of parenthesis
-    
-    print("StatTrackingIntegration: Running system verification")
-    local success, result = pcall(function()
-        return StatVerifier.runIntegrationTest()
-    end)
-    
-    if not success then
-        print("StatTrackingIntegration: Error during verification: " .. tostring(result))
-        return false
-    end
-    
-    return result
-end
 -- Get debug information about the stat tracking system
 function StatTrackingIntegration.getDebugInfo()
     local initSuccess = StatTrackingIntegration.init()
@@ -234,6 +266,7 @@ function StatTrackingIntegration.getDebugInfo()
     local debugInfo = {
         initialized = true,
         playerLoaded = (player ~= nil),
+        fileSystemWorking = fileSystemWorking,
         totalSessions = stats.totalSessions or 0,
         totalKeystrokes = stats.totalKeystrokes or 0,
         totalMistakes = stats.totalMistakes or 0,
@@ -250,6 +283,12 @@ function StatTrackingIntegration.resetStats()
     local initSuccess = StatTrackingIntegration.init()
     if not initSuccess then
         print("StatTrackingIntegration: Failed to initialize, cannot reset stats")
+        return false
+    end
+    
+    -- Verify file system is working
+    if not fileSystemWorking then
+        print("StatTrackingIntegration: Cannot reset stats - file system not working")
         return false
     end
     
@@ -293,6 +332,11 @@ function StatTrackingIntegration.resetStats()
         moneySpent = 0
     }
     
+    -- Reset other player attributes
+    player.totalMoney = 50
+    player.currentRound = 1
+    player.maxRoundReached = 1
+    
     -- Save the reset stats
     local saveSuccess
     local success, result = pcall(function()
@@ -308,8 +352,5 @@ function StatTrackingIntegration.resetStats()
     
     return saveSuccess
 end
-
-
-
 
 return StatTrackingIntegration

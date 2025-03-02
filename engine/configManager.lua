@@ -154,14 +154,28 @@ function ConfigManager:saveConfig(configName)
     -- Convert config to serialized Lua
     local serialized = "return " .. self:serializeTable(self.configs[configName])
 
-    -- Save using FileManager
-    local success = FileManager.saveToFile(configPath, serialized)
+    -- Ensure directory exists before trying to save
+    if not love.filesystem.getInfo("config") then
+        local success = love.filesystem.createDirectory("config")
+        print("ConfigManager: Creating config directory: " .. (success and "Success" or "Failed"))
+    end
+
+    -- Try to save directly
+    local success, err = love.filesystem.write(configPath, serialized)
+    
+    if not success then
+        print("ConfigManager: Direct save failed for '" .. configName .. "': " .. tostring(err))
+        
+        -- Fall back to using the FileManager
+        success = FileManager.saveToFile(configPath, serialized)
+    end
     
     if success then
         print("ConfigManager: Saved config '" .. configName .. "'")
         return true
     else
-        print("ConfigManager: Failed to save config '" .. configName .. "'")
+        -- If config saving fails, don't break the game, just log the error
+        print("ConfigManager: Failed to save config '" .. configName .. "', proceeding with in-memory defaults")
         return false
     end
 end

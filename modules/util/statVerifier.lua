@@ -4,6 +4,8 @@
 
 local StatVerifier = {}
 
+
+
 -- Check if player model stats are correctly loaded from save file
 function StatVerifier.verifySavedStats()
     local success, PlayerModel = pcall(require, "modules/player/playerModel")
@@ -152,7 +154,17 @@ end
 -- Add an integration test entry point that can be called from debugging screens
 function StatVerifier.runIntegrationTest()
     print("StatVerifier: Starting integration test")
-    
+
+    -- First check if we can write files at all
+    local testPath = "save/test_stat_verifier.tmp"
+    local canWrite = love.filesystem.write(testPath, "test")
+    if canWrite then
+        love.filesystem.remove(testPath)
+    else
+        print("StatVerifier: WARNING - Cannot write files, test will fail")
+        return false
+    end
+
     local success, testResult = pcall(StatVerifier.testSaveAndLoad)
     if not success then
         print("StatVerifier: Test save/load failed with error: " .. tostring(testResult))

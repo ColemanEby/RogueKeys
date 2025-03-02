@@ -1,5 +1,5 @@
 -- main.lua
--- Refactored entry point for the typing trainer roguelike
+-- Refactored entry point for the typing trainer roguelike with improved file system handling
 
 -- Import engine modules
 local StateManager = require("engine/stateManager")
@@ -8,11 +8,13 @@ local ConfigManager = require("engine/configManager")
 
 -- Import startup utilities
 local TextGenerator = require("modules/typing/textGenerator")
+local FileManager = require("modules/util/fileManager")
 
 -- Global settings
 local GAME_TITLE = "Typing Trainer Roguelike"
 local DEFAULT_WIDTH = 800
 local DEFAULT_HEIGHT = 600
+local GAME_IDENTITY = "RogueKeys"
 
 -- Debugging flag
 local DEBUG_MODE = true
@@ -37,6 +39,35 @@ function love.errorhandler(msg)
 end
 
 function love.load()
+    -- Set a consistent identity for save files
+    love.filesystem.setIdentity(GAME_IDENTITY, true)
+    
+    -- Initialize essential directories
+    local directoriesToCreate = {
+        "config",
+        "save",
+        "data",
+        "resources/sprites",
+        "resources/fonts", 
+        "resources/sounds"
+    }
+    
+    print("Ensuring critical directories exist...")
+    for _, dir in ipairs(directoriesToCreate) do
+        local success = love.filesystem.createDirectory(dir)
+        print("Creating directory " .. dir .. ": " .. (success and "Success" or "Failed"))
+    end
+    
+    -- Test file writing capability
+    local testFile = "save/test_write.tmp"
+    local success = love.filesystem.write(testFile, "Test write capability")
+    print("Testing file write capability: " .. (success and "Success" or "Failed"))
+    if success then
+        love.filesystem.remove(testFile)
+    else
+        print("WARNING: File writing appears to be disabled. Check permissions!")
+    end
+    
     -- Initialize basic rendering
     love.graphics.setBackgroundColor(0.1, 0.1, 0.2)
     love.graphics.setFont(love.graphics.newFont(14))
@@ -56,9 +87,7 @@ function love.load()
 
     -- Initialize file management system
     print("Setting up file management system...")
-    local FileManager
     local success, err = pcall(function()
-        FileManager = require("modules/util/fileManager")
         FileManager.init()
         
         -- Print debug info about file system
@@ -68,21 +97,8 @@ function love.load()
     if not success then
         print("ERROR initializing file management: " .. tostring(err))
         -- Create a fallback implementation to prevent further errors
-        FileManager = {
-            init = function() return false end,
-            ensureDirectoryExists = function(dir) 
-                return love.filesystem.createDirectory(dir) 
-            end,
-            saveToFile = function(path, data) 
-                return love.filesystem.write(path, data) 
-            end,
-            loadFromFile = function(path) 
-                return love.filesystem.read(path) 
-            end,
-            printFileSystemInfo = function() 
-                print("File system info not available") 
-            end
-        }
+        _G.FileSystemDisabled = true
+        print("Using fallback in-memory file system")
     end
 
     -- Start with a loading message
@@ -93,9 +109,10 @@ function love.load()
 
     -- Initialize ConfigManager
     print("Initializing ConfigManager...")
-    local success, err = pcall(function() ConfigManager:init() end)
+    success, err = pcall(function() ConfigManager:init() end)
     if not success then
         print("ERROR initializing ConfigManager: " .. tostring(err))
+        print("Using default configurations")
     end
 
     -- Initialize ResourceManager
@@ -118,6 +135,23 @@ function love.load()
     success, err = pcall(function() TextGenerator:preload() end)
     if not success then
         print("ERROR preloading text: " .. tostring(err))
+    end
+
+    -- Initialize stat tracking integration
+    print("Initializing stat tracking system...")
+    success, err = pcall(function()
+        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+        StatTrackingIntegration.init()
+        
+        -- Verify system integrity if in debug mode
+        if _G.DEBUG_MODE then
+            print("Running stat tracking verification...")
+            StatTrackingIntegration.verifySystem()
+        end
+    end)
+
+    if not success then
+        print("ERROR initializing stat tracking: " .. tostring(err))
     end
 
     -- Ensure the StateManager has the fallback state
@@ -201,17 +235,59 @@ function love.draw()
         love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 10)
         love.graphics.print("State: " .. (StateManager.current and StateManager.current.name or "nil"), 10, 30)
         love.graphics.print("Memory: " .. string.format("%.2f MB", collectgarbage("count") / 1024), 10, 50)
+        
+        -- Add file system status
+        if _G.FileSystemDisabled then
+            love.graphics.setColor(1, 0.5, 0.5, 0.7)
+            love.graphics.print("FILE SYSTEM: DISABLED (using memory only)", 10, 70)
+        end
     end
 end
 
 function love.keypressed(key, scancode, isrepeat)
     -- Debug key combos
-    if DEBUG_MODE and key == "f1" then
-        print("--- DEBUG INFO ---")
-        print("FPS: " .. love.timer.getFPS())
-        print("Current state: " .. (StateManager.current and StateManager.current.name or "nil"))
-        print("Memory usage: " .. collectgarbage("count") .. " KB")
-        return
+    if DEBUG_MODE then
+        if key == "f1" then
+            print("--- DEBUG INFO ---")
+            print("FPS: " .. love.timer.getFPS())
+            print("Current state: " .. (StateManager.current and StateManager.current.name or "nil"))
+            print("Memory usage: " .. collectgarbage("count") .. " KB")
+            return
+        elseif key == "f2" then
+            print("--- STATS DEBUG INFO ---")
+            local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+            local debugInfo = StatTrackingIntegration.getDebugInfo()
+            
+            for k, v in pairs(debugInfo) do
+                print(k .. ": " .. tostring(v))
+            end
+            
+            -- Verify saved stats
+            local StatVerifier = require("modules/util/statVerifier")
+            StatVerifier.verifySavedStats()
+            
+            return
+        elseif key == "f3" then
+            -- Reset stats (for testing)
+            print("--- RESETTING STATS ---")
+            local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
+            local success = StatTrackingIntegration.resetStats()
+            print("Stats reset: " .. (success and "Success" or "Failed"))
+            return
+        elseif key == "f4" then
+            -- Test file system
+            print("--- TESTING FILE SYSTEM ---")
+            local testPath = "save/file_test.tmp"
+            local success = love.filesystem.write(testPath, "File system test")
+            print("Writing test file: " .. (success and "Success" or "Failed"))
+            
+            if success then
+                local content = love.filesystem.read(testPath)
+                print("Reading test file: " .. (content and "Success" or "Failed"))
+                love.filesystem.remove(testPath)
+            end
+            return
+        end
     end
 
     -- Force quit (for development)
@@ -271,68 +347,19 @@ end
 
 function love.quit()
     -- Final file system diagnostic check before quitting
-    if FileManager then
+    if not _G.FileSystemDisabled and FileManager then
         print("Performing final file system check...")
         FileManager.printFileSystemInfo()
     end
+    
     -- Save configuration before quitting
     local success, err = pcall(function() ConfigManager:saveAllConfigs() end)
     if not success then
         print("ERROR saving configs: " .. tostring(err))
     end
+    
     return false
 end
 
--- Snippet to add to main.lua to integrate the stat tracking debugging system
-
 -- Add the DEBUG_MODE as a global variable so it can be accessed everywhere
 _G.DEBUG_MODE = true
-
--- Add this right after the "Loading engine modules..." message in love.load()
--- to initialize our stat tracking integration
-
--- Initialize stat tracking integration
-print("Initializing stat tracking system...")
-local success, err = pcall(function()
-    local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-    StatTrackingIntegration.init()
-    
-    -- Verify system integrity if in debug mode
-    if _G.DEBUG_MODE then
-        print("Running stat tracking verification...")
-        StatTrackingIntegration.verifySystem()
-    end
-end)
-
-if not success then
-    print("ERROR initializing stat tracking: " .. tostring(err))
-end
-
--- Add a debug key handler to the love.keypressed function
--- Add this inside the existing keypressed function:
-
--- Debug commands for stats testing/verification
-if _G.DEBUG_MODE then
-    if key == "f2" then
-        print("--- STATS DEBUG INFO ---")
-        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-        local debugInfo = StatTrackingIntegration.getDebugInfo()
-        
-        for k, v in pairs(debugInfo) do
-            print(k .. ": " .. tostring(v))
-        end
-        
-        -- Verify saved stats
-        local StatVerifier = require("modules/util/statVerifier")
-        StatVerifier.verifySavedStats()
-        
-        return
-    elseif key == "f3" then
-        -- Reset stats (for testing)
-        print("--- RESETTING STATS ---")
-        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-        local success = StatTrackingIntegration.resetStats()
-        print("Stats reset: " .. (success and "Success" or "Failed"))
-        return
-    end
-end

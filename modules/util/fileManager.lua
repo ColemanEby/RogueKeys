@@ -28,6 +28,16 @@ function FileManager.init()
         FileManager.ensureDirectoryExists(dir)
     end
     
+    -- Test write permissions
+    local testFile = "save/test_write.tmp"
+    local success = love.filesystem.write(testFile, "Testing write permissions")
+    if success then
+        love.filesystem.remove(testFile)
+        print("FileManager: Write permissions confirmed")
+    else
+        print("FileManager: WARNING - Cannot write files! Check permissions or storage space.")
+    end
+    
     return true
 end
 
@@ -53,21 +63,34 @@ end
 function FileManager.saveToFile(filepath, data)
     -- Make sure the directory exists
     local directory = filepath:match("(.*)/")
-    if directory then
+    if directory and directory ~= "" then
         FileManager.ensureDirectoryExists(directory)
     end
     
     -- Try to save the file
-    print("FileManager: Saving to file: " .. filepath)
-    local success, message = love.filesystem.write(filepath, data)
+    print("FileManager: Attempting to save to file: " .. filepath)
     
-    if not success then
-        print("FileManager: FAILED to save file " .. filepath .. ": " .. tostring(message))
-    else
-        print("FileManager: Successfully saved file: " .. filepath)
+    -- First attempt: standard LÖVE write
+    local success, message = pcall(function()
+        return love.filesystem.write(filepath, data)
+    end)
+    
+    if not success or not message then
+        print("FileManager: Standard write failed: " .. tostring(message))
+        
+        -- Second attempt: try write with binary flag
+        success, message = pcall(function()
+            return love.filesystem.write(filepath, data, #data)
+        end)
+        
+        if not success or not message then
+            print("FileManager: Binary write failed: " .. tostring(message))
+            return false, "Failed to write file"
+        end
     end
     
-    return success, message
+    print("FileManager: Successfully saved file: " .. filepath)
+    return true
 end
 
 -- Safely load data from a file
@@ -81,15 +104,54 @@ function FileManager.loadFromFile(filepath)
     
     -- Try to load the file
     print("FileManager: Loading file: " .. filepath)
-    local content, size = love.filesystem.read(filepath)
+    local content, size = nil, 0
     
-    if not content then
-        print("FileManager: FAILED to load file " .. filepath)
+    local success, result = pcall(function()
+        return love.filesystem.read(filepath)
+    end)
+    
+    if success and result then
+        content, size = result, #result
+    else
+        print("FileManager: FAILED to load file " .. filepath .. ": " .. tostring(result))
         return nil, "Failed to read file"
     end
     
     print("FileManager: Successfully loaded file: " .. filepath .. " (" .. size .. " bytes)")
     return content
+end
+
+-- Check if file exists and is writable
+function FileManager.isFileWritable(filepath)
+    -- Test by attempting to write
+    local success = love.filesystem.write(filepath, "test")
+    if success then
+        -- Clean up
+        love.filesystem.remove(filepath)
+        return true
+    end
+    return false
+end
+
+-- Get a list of files in a directory
+function FileManager.getFilesInDirectory(directory)
+    if not directory or directory == "" then
+        directory = ""
+    end
+    
+    local files = {}
+    if love.filesystem.getInfo(directory) then
+        local items = love.filesystem.getDirectoryItems(directory)
+        for _, item in ipairs(items) do
+            local path = directory == "" and item or directory .. "/" .. item
+            local info = love.filesystem.getInfo(path)
+            if info and info.type == "file" then
+                table.insert(files, path)
+            end
+        end
+    end
+    
+    return files
 end
 
 -- Debug function to print out file system information
