@@ -10,6 +10,9 @@ local ConfigManager = require("engine/configManager")
 local TextGenerator = require("modules/typing/textGenerator")
 local FileManager = require("modules/util/fileManager")
 
+-- Add the DEBUG_MODE as a global variable so it can be accessed everywhere
+_G.DEBUG_MODE = false
+
 -- Global settings
 local GAME_TITLE = "Typing Trainer Roguelike"
 local DEFAULT_WIDTH = 800
@@ -52,7 +55,7 @@ function love.load()
         "resources/sounds"
     }
     
-    print("Ensuring critical directories exist...")
+    print("[Ensuring critical directories exist...]")
     for _, dir in ipairs(directoriesToCreate) do
         local success = love.filesystem.createDirectory(dir)
         print("Creating directory " .. dir .. ": " .. (success and "Success" or "Failed"))
@@ -86,7 +89,7 @@ function love.load()
     love.keyboard.setKeyRepeat(false)
 
     -- Initialize file management system
-    print("Setting up file management system...")
+    print("[Setting up file management system...]")
     local success, err = pcall(function()
         FileManager.init()
         
@@ -105,10 +108,10 @@ function love.load()
     print("=== Starting Typing Trainer Roguelike ===")
 
     -- Try loading modules in a safe way
-    print("Loading engine modules...")
+    print("[Loading engine modules...]")
 
     -- Initialize ConfigManager
-    print("Initializing ConfigManager...")
+    print("[Initializing ConfigManager...]")
     success, err = pcall(function() ConfigManager:init() end)
     if not success then
         print("ERROR initializing ConfigManager: " .. tostring(err))
@@ -116,7 +119,7 @@ function love.load()
     end
 
     -- Initialize ResourceManager
-    print("Initializing ResourceManager...")
+    print("[Initializing ResourceManager...]")
     success, err = pcall(function() ResourceManager:init() end)
     if not success then
         print("ERROR initializing ResourceManager: " .. tostring(err))
@@ -131,14 +134,14 @@ function love.load()
     end
 
     -- Preload text data
-    print("Preloading text data...")
+    print("[Preloading text data...]")
     success, err = pcall(function() TextGenerator:preload() end)
     if not success then
         print("ERROR preloading text: " .. tostring(err))
     end
 
     -- Initialize stat tracking integration
-    print("Initializing stat tracking system...")
+    print("[Initializing stat tracking system...]")
     success, err = pcall(function()
         local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
         StatTrackingIntegration.init()
@@ -155,7 +158,7 @@ function love.load()
     end
 
     -- Ensure the StateManager has the fallback state
-    print("Initializing States...")
+    print("[Initializing States...]")
     StateManager.stateCache = StateManager.stateCache or {}
 
     -- Load the fallback menu state directly
@@ -173,7 +176,7 @@ function love.load()
     end
 
     -- Switch to fallback menu initially to ensure something displays
-    print("Switching to initial state...")
+    print("[Switching to initial state...]")
     if StateManager.stateCache["menuState"] then
         StateManager.switch(StateManager.stateCache["menuState"])
     else
@@ -361,5 +364,3 @@ function love.quit()
     return false
 end
 
--- Add the DEBUG_MODE as a global variable so it can be accessed everywhere
-_G.DEBUG_MODE = true
