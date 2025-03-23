@@ -399,7 +399,7 @@ function StatsState.drawTypingStats(x, y, width, height)
         local valueX = itemX + itemWidth - font:getWidth(valueText) - 10
         love.graphics.print(valueText, valueX, itemY + (itemHeight - font:getHeight()) / 2)
     end
-
+    -- =============================================================================================================
     -- Draw a mini graph showing accuracy over time (conceptual - would need real data)
     local graphX = startX
     local graphY = startY + (math.ceil(#statItems / itemsPerRow) + 0.5) * (itemHeight + padding)
@@ -427,20 +427,44 @@ function StatsState.drawTypingStats(x, y, width, height)
                            graphX + 10, graphY + 30)
     end
 
+    local matchHistory = player:getMatchHistory()
+    local matchCount = #matchHistory
+    -- print("Match history count from player:getMatchHistory() " .. matchCount)
+    
     for i = 1, barCount do
-        -- Simulate some data (in a real implementation, use actual session history)
-        local value = 50 + math.sin(i * 0.7) * 20 + math.random() * 10
-        local barHeight = (value / 100) * barMaxHeight
-
-        -- Draw bar
-        local barX = graphX + 20 + (i - 1) * barWidth
-
-        -- Color gradient based on value
-        local r = 1 - (value / 100)
-        local g = value / 100
-        love.graphics.setColor(r, g, 0.2)
-
-        love.graphics.rectangle("fill", barX, barY - barHeight, barWidth - 5, barHeight, 2, 2)
+        -- Calculate the reversed index position
+        local reversedPosition = barCount - (i - 1)
+        
+        if i <= matchCount then
+            -- using 1 so that there is a bar but it barely shows
+            local matchIndex = i -- Reverse the match index too
+            local value = matchHistory[matchIndex].accuracy
+            local barHeight = (value / 100) * barMaxHeight
+    
+            -- Draw bar (with reversedPosition instead of i)
+            local barX = graphX + 20 + (reversedPosition - 1) * barWidth
+    
+            -- Color gradient based on value
+            local r = 1 - (value / 100)
+            local g = value / 100
+            love.graphics.setColor(r, g, 0.2)
+    
+            love.graphics.rectangle("fill", barX, barY - barHeight, barWidth - 5, barHeight, 2, 2)
+        else
+            -- using 1 so that there is a bar but it barely shows
+            local value = 1
+            local barHeight = (value / 100) * barMaxHeight
+    
+            -- Draw bar (with reversedPosition instead of i)
+            local barX = graphX + 20 + (reversedPosition - 1) * barWidth
+    
+            -- Color gradient based on value
+            local r = 1 - (value / 100)
+            local g = value / 100
+            love.graphics.setColor(r, g, 0.2)
+    
+            love.graphics.rectangle("fill", barX, barY - barHeight, barWidth - 5, barHeight, 2, 2)
+        end
     end
 
     -- Draw axis labels
@@ -449,7 +473,7 @@ function StatsState.drawTypingStats(x, y, width, height)
     love.graphics.print("100%", graphX + 5, graphY + 20)
     love.graphics.print("0%", graphX + 5, barY - 5)
 end
-
+-- =====================================================================================================================
 -- Draw economy stats
 function StatsState.drawEconomyStats(x, y, width, height)
     local stats = player:getStats()
