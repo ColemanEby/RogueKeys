@@ -23,6 +23,10 @@ local menuItems = {
         print("Opening statistics...")
         StateManager.switch("statsState")
     end },
+    { text = "Settings", action = function()
+        print("Opening settings...")
+        StateManager.switch("settingsState")
+    end},
     { text = "Exit Game", action = function()
         print("Exiting game...")
         love.event.quit()

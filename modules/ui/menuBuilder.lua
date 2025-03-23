@@ -8,6 +8,7 @@ MenuBuilder.__index = MenuBuilder
 
 -- Menu item types
 MenuBuilder.TYPE_BUTTON = "button"
+MenuBuilder.TYPE_INPUT = "input"
 MenuBuilder.TYPE_TOGGLE = "toggle"
 MenuBuilder.TYPE_SLIDER = "slider"
 MenuBuilder.TYPE_LABEL = "label"
@@ -72,6 +73,16 @@ function MenuBuilder:addButton(label, callback, enabled)
         enabled = enabled
     })
     return self
+end
+
+function MenuBuilder:addInput(label, callback, enabled)
+    enabled = (enabled ~= false) -- Default to true if not specified
+    table.insert(self.items, {
+        type = MenuBuilder.Type_INPUT,
+        label = label,
+        callback = callback,
+        enabled = enabled,
+    })
 end
 
 -- Add a toggle option to the menu
@@ -169,6 +180,13 @@ function MenuBuilder:update(dt)
     -- Update any active animations or effects
 end
 
+function MenuBuilder:textinput(text)
+    local item = menu.items[menu.currentSelection]
+    if item and item.type == MenuBuilder.TYPE_INPUT then
+        item.value = item.value .. text
+    end
+end
+
 -- Handle keyboard input
 function MenuBuilder:keypressed(key)
     if key == "up" then
@@ -228,11 +246,18 @@ function MenuBuilder:keypressed(key)
             end
         end
     elseif key == "escape" or key == "backspace" then
+
+        if key == "backspace" and item.type == MenuBuilder.TYPE_INPUT then
+            item.value = item.value:sub(1, -2) -- Remove last char
+        end
+
         if self.onBack then
             self.onBack()
         elseif self.onClose then
             self.onClose()
         end
+    else
+        item.callback(item.value)
     end
 end
 
@@ -322,6 +347,14 @@ function MenuBuilder:draw()
                 local toggleText = item.value and "ON" or "OFF"
                 love.graphics.printf(toggleText, x + self.style.padding, itemY + (self.style.itemHeight - itemFont:getHeight()) / 2,
                         menuWidth - self.style.padding * 2, "right")
+            elseif item.type == MenuBuilder.TYPE_INPUT then
+                -- Draw input box
+                love.graphics.setColor(0.3, 0.3, 0.3, 1)
+                love.graphics.rectangle("fill", x + self.style.padding, itemY + 4, menuWidth - self.style.padding * 2, itemFont:getHeight() + 4, 5)
+
+                -- Draw input text
+                love.graphics.setColor(unpack(itemColor))
+                love.graphics.printf(item.value, x + self.style.padding + 5, itemY + 6, menuWidth - self.style.padding * 2, "left")
             elseif item.type == MenuBuilder.TYPE_SLIDER then
                 -- Draw slider track
                 local sliderWidth = menuWidth / 3

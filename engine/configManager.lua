@@ -60,26 +60,29 @@ local ConfigManager = {
 
         -- Typing challenge difficulties
         difficulties = {
-            easy = {
-                name = "Easy",
-                sentenceLength = 8,
-                maxWordSize = 6,
-                timeLimit = 60,
-                baseScorePerChar = 1
-            },
-            medium = {
-                name = "Medium",
-                sentenceLength = 12,
-                maxWordSize = 8,
-                timeLimit = 45,
-                baseScorePerChar = 1.5
-            },
-            hard = {
-                name = "Hard",
-                sentenceLength = 16,
-                maxWordSize = 12,
-                timeLimit = 30,
-                baseScorePerChar = 2
+            current = "easy",
+            levels = {
+                easy = {
+                    name = "Easy",
+                    sentenceLength = 8,
+                    maxWordSize = 6,
+                    timeLimit = 60,
+                    baseScorePerChar = 1
+                },
+                medium = {
+                    name = "Medium",
+                    sentenceLength = 12,
+                    maxWordSize = 8,
+                    timeLimit = 45,
+                    baseScorePerChar = 1.5
+                },
+                hard = {
+                    name = "Hard",
+                    sentenceLength = 16,
+                    maxWordSize = 12,
+                    timeLimit = 30,
+                    baseScorePerChar = 2
+                }
             }
         },
 
@@ -299,6 +302,14 @@ end
 -- Get all available keyboard layouts
 function ConfigManager:getKeyboardLayouts()
     return self.configs.keyboards
+end
+
+function ConfigManager:getDifficulties()
+    return self.configs.difficulties
+end
+
+function ConfigManager:getGame()
+    return self.configs.game
 end
 
 -- Get difficulty settings
