@@ -7,6 +7,7 @@ local KeyboardModel = require("modules/keyboard/keyboardModel")
 
 local PlayerModel = {}
 PlayerModel.__index = PlayerModel
+_G.MAX_MATCH_HISTORY = 10
 
 -- Create a new player model
 function PlayerModel.new()
@@ -23,11 +24,11 @@ function PlayerModel.new()
     if configSuccess and configMoney then
         startingMoney = configMoney
     end
-    
     self.totalMoney = startingMoney
     self.level = 1
     self.currentRound = 1
     self.maxRoundReached = 1
+    self.matchHistory = {}
 
     -- Player equipment - with error handling
     local keyboardSuccess, keyboard = pcall(function()
@@ -125,13 +126,17 @@ function PlayerModel:endSession(sessionStats)
 
     -- Add session-specific stats if provided
     if sessionStats then
+        local matchData = {}
+
         -- Update keystroke stats with safety checks
         if sessionStats.keystrokes and type(sessionStats.keystrokes) == "number" then
             self.stats.totalKeystrokes = self.stats.totalKeystrokes + sessionStats.keystrokes
+            matchData.keystrokes = sessionStats.keystrokes
         end
         
         if sessionStats.mistakes and type(sessionStats.mistakes) == "number" then
             self.stats.totalMistakes = self.stats.totalMistakes + sessionStats.mistakes
+            matchData.mistakes = sessionStats.mistakes
         end
         
         if sessionStats.correct and type(sessionStats.correct) == "number" then
@@ -143,13 +148,23 @@ function PlayerModel:endSession(sessionStats)
               ", Mistakes: " .. (sessionStats.mistakes or 0) .. 
               ", Correct: " .. (sessionStats.correct or 0))
 
+        if sessionStats.apm then
+            matchData.apm = sessionStats.apm
+        end
         -- Update best values
         if sessionStats.apm and sessionStats.apm > self.stats.bestAPM then
             self.stats.bestAPM = sessionStats.apm
         end
 
+        if sessionStats.wpm then
+            matchData.wpm = sessionStats.wpm
+        end
         if sessionStats.wpm and sessionStats.wpm > self.stats.bestWPM then
             self.stats.bestWPM = sessionStats.wpm
+        end
+
+        if sessionStats.accuracy then
+            matchData.accuracy = sessionStats.accuracy
         end
 
         if sessionStats.accuracy and sessionStats.accuracy > self.stats.bestAccuracy then
@@ -160,16 +175,29 @@ function PlayerModel:endSession(sessionStats)
             self.stats.bestStreak = sessionStats.longestStreak
         end
 
+        if sessionStats.mistakes then
+            matchData.mistakes = sessionStats.mistakes
+        end
         -- Check for perfect round
         if sessionStats.mistakes == 0 and sessionStats.keystrokes > 0 then
             self.stats.roundsWithoutError = self.stats.roundsWithoutError + 1
             self.stats.perfectRounds = self.stats.perfectRounds + 1
         end
-
+        if sessionStats.moneyEarned then
+            matchData.moneyEarned = sessionStats.moneyEarned
+        end
         -- Record money earned
         if sessionStats.moneyEarned and type(sessionStats.moneyEarned) == "number" then
             self.stats.moneyEarned = self.stats.moneyEarned + sessionStats.moneyEarned
         end
+
+
+        local curMatchHistoryCount = #self.matchHistory
+        print("Match history count before saving current match: " .. curMatchHistoryCount)
+        matchData.timestamp = os.time()
+        self:addMatchToHistory(matchData)
+        local matchHistoryCount = #self.matchHistory
+        print("Match history count after saving current match: " .. matchHistoryCount)
     else
         print("PlayerModel: Warning - No session stats provided")
     end
@@ -179,6 +207,22 @@ function PlayerModel:endSession(sessionStats)
     print("PlayerModel: Session stats saved: " .. (saveSuccess and "Success" or "Failed"))
     
     return saveSuccess
+end
+
+function PlayerModel:addMatchToHistory(matchData)
+        -- Shift all existing entries one position forward
+        for i = _G.MAX_MATCH_HISTORY, 2, -1 do
+            self.matchHistory[i] = self.matchHistory[i-1]
+        end
+        
+        -- Insert new match at the first position
+        self.matchHistory[1] = matchData
+        
+        -- If we exceeded maxLength, remove the last entry
+        if #self.matchHistory > _G.MAX_MATCH_HISTORY then
+            self.matchHistory[_G.MAX_MATCH_HISTORY + 1] = nil
+        end
+        
 end
 
 -- Add money to the player's total
@@ -315,6 +359,10 @@ function PlayerModel:getStats()
     return self.stats
 end
 
+function PlayerModel:getMatchHistory()
+    return self.matchHistory
+end
+
 -- Improved save method with better error handling
 function PlayerModel:save()
     -- Prepare data structure for serialization
@@ -324,6 +372,7 @@ function PlayerModel:save()
         currentRound = self.currentRound,
         maxRoundReached = self.maxRoundReached,
         selectedKeyboardLayout = self.selectedKeyboardLayout,
+        matchHistory = self.matchHistory,
         stats = self.stats
     }
     
@@ -458,6 +507,25 @@ function PlayerModel.load()
             if data.stats[statName] and type(data.stats[statName]) == "number" then
                 player.stats[statName] = data.stats[statName]
             end
+        end
+    end
+    print("============= Attempting to load match history =============")
+    player.matchHistory = {}
+    -- Load Match History
+    if data.matchHistory and type(data.matchHistory) == "table" then
+        -- print("Loading match history")
+        for index, match in pairs(data.matchHistory) do
+            -- Create a new table for each match entry
+            player.matchHistory[index] = {
+                timestamp = match.timestamp,
+                wpm = match.wpm,
+                accuracy = match.accuracy,
+                keystrokes = match.keystrokes,
+                mistakes = match.mistakes,
+                apm = match.apm,
+                moneyEarned = match.moneyEarned
+            }
+            -- print("History added for match " .. index)
         end
     end
 

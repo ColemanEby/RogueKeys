@@ -126,7 +126,7 @@ function RoundState.keypressed(key)
                     StateManager.switch("roundState")
                 else
                     -- Go to shop
-                    StateManager.switch("shopState")
+                    StateManager.switch("menuState")
                 end
             else
                 -- Default to menu if no stats
@@ -134,6 +134,8 @@ function RoundState.keypressed(key)
             end
         elseif key == "escape" then
             StateManager.switch("menuState")
+        elseif key == "s" then
+            StateManager.switch("shopState")
         end
     end
 end
