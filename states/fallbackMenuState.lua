@@ -1,7 +1,13 @@
 -- states/fallbackMenuState.lua
--- Simple fallback menu state that doesn't rely on other modules
+-- Safety-net menu shown when menuState fails to load. Its whole job is to
+-- still work when something else is broken, so keep its dependency list to
+-- the bare minimum: StateManager and Theme, both of which main.lua already
+-- requires successfully before fallbackMenuState is even considered. It does
+-- NOT opt into the logical canvas (`logical = true`) -- it needs to render
+-- even if Screen/the canvas failed to initialise.
 
 local StateManager = require("engine/stateManager")
+local Theme = require("modules/ui/theme")
 
 local FallbackMenuState = {
     name = "FallbackMenuState"
@@ -9,7 +15,6 @@ local FallbackMenuState = {
 
 local menuItems = {
     { text = "Start Game", action = function()
-        print("Attempting to start game...")
         StateManager.switch("roundState")
     end },
     { text = "Exit Game", action = function()
@@ -21,52 +26,39 @@ local selectedItem = 1
 local showDebugInfo = true
 
 function FallbackMenuState.enter()
-    print("FallbackMenuState: Entered")
-end
-
-function FallbackMenuState.update(dt)
-    -- Nothing to update
+    if _G.DEBUG_MODE then print("FallbackMenuState: entered") end
 end
 
 function FallbackMenuState.draw()
-    -- Draw background
-    love.graphics.clear(0.1, 0.1, 0.2)
-
-    -- Draw title
-    love.graphics.setColor(1, 1, 1)
-    local font = love.graphics.getFont()
-    local fontSize = font:getHeight()
     local screenWidth = love.graphics.getWidth()
     local screenHeight = love.graphics.getHeight()
 
+    love.graphics.clear(Theme.color("base"))
+
+    love.graphics.setFont(Theme.font("display"))
+    Theme.setColor("text")
     love.graphics.printf("Typing Trainer Roguelike", 0, screenHeight / 4, screenWidth, "center")
 
-    -- Draw menu items
+    love.graphics.setFont(Theme.font("body"))
+    local fontSize = Theme.font("body"):getHeight()
     local menuY = screenHeight / 2
     for i, item in ipairs(menuItems) do
-        if i == selectedItem then
-            love.graphics.setColor(1, 1, 0)
-        else
-            love.graphics.setColor(1, 1, 1)
-        end
-
-        love.graphics.printf(item.text, 0, menuY + (i-1) * fontSize * 2, screenWidth, "center")
+        Theme.setColor(i == selectedItem and "accent" or "text")
+        love.graphics.printf(item.text, 0, menuY + (i - 1) * fontSize * 2, screenWidth, "center")
     end
 
-    -- Draw instructions
-    love.graphics.setColor(0.7, 0.7, 0.7)
+    love.graphics.setFont(Theme.font("small"))
+    Theme.setColor("textMuted")
     love.graphics.printf("Up/Down: Select, Enter: Confirm", 0, screenHeight - fontSize * 3, screenWidth, "center")
 
-    -- Draw debug info
     if showDebugInfo then
-        love.graphics.setColor(1, 1, 1, 0.7)
+        Theme.setColor("textMuted", 0.7)
         love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 10)
         love.graphics.print("Memory: " .. string.format("%.2f MB", collectgarbage("count") / 1024), 10, 30)
         love.graphics.print("Current State: FallbackMenuState", 10, 50)
     end
 
-    -- Reset color
-    love.graphics.setColor(1, 1, 1)
+    Theme.setColor("text")
 end
 
 function FallbackMenuState.keypressed(key)
@@ -90,22 +82,17 @@ function FallbackMenuState.keypressed(key)
 end
 
 function FallbackMenuState.mousepressed(x, y, button)
-    -- Handle mouse clicks (simple implementation)
-    if button == 1 then
-        local font = love.graphics.getFont()
-        local fontSize = font:getHeight()
-        local screenWidth = love.graphics.getWidth()
-        local screenHeight = love.graphics.getHeight()
-        local menuY = screenHeight / 2
+    if button ~= 1 then return end
 
-        for i, item in ipairs(menuItems) do
-            local itemY = menuY + (i-1) * fontSize * 2
-            if y >= itemY and y <= itemY + fontSize then
-                if item.action then
-                    item.action()
-                end
-                break
-            end
+    local fontSize = Theme.font("body"):getHeight()
+    local screenHeight = love.graphics.getHeight()
+    local menuY = screenHeight / 2
+
+    for i, item in ipairs(menuItems) do
+        local itemY = menuY + (i - 1) * fontSize * 2
+        if y >= itemY and y <= itemY + fontSize then
+            if item.action then item.action() end
+            break
         end
     end
 end
