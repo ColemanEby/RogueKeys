@@ -1,21 +1,35 @@
 -- engine/stateManager.lua
--- Enhanced State Manager with state history tracking and transitions
+-- State Manager: history-tracked switching, a real fade transition, an overlay
+-- stack (for things like a pause menu drawn over a dimmed round), and params
+-- delivery into `enter`.
+--
+-- Overlay drawing: while an overlay is active, StateManager.current *is* the
+-- overlay (mousepressed/keypressed/update all naturally "just work" because
+-- everything reads StateManager.current). draw() is the one exception: it
+-- calls StateManager.drawUnderlay() first so the state beneath the overlay
+-- still renders (dimmed) before the overlay draws on top of it. Only the
+-- immediate state beneath the top overlay is drawn -- deeply nested overlays
+-- do not show every ancestor.
+
+local Screen = require("modules/ui/screen")
 
 local StateManager = {
     current = nil,
     history = {},
+    overlayStack = {}, -- states beneath the active overlay(s), bottom..top
     stateCache = {}, -- Cache states to avoid reloading
     maxHistorySize = 10,
     transitioning = false,
-    transitionDuration = 0.3,
+    transitionDuration = 0.2,
     transitionTimer = 0,
     transitionType = "fade", -- "fade", "slide", etc.
     onTransitionComplete = nil,
-    registeredStates = {} -- New: Registry of available states
+    registeredStates = {} -- Registry of available states
 }
 
 -- Transition screen info
 local transitionAlpha = 0
+local transitionSwapped = false
 
 -- Register a state with the manager
 function StateManager.registerState(stateName, stateModule)
@@ -29,7 +43,8 @@ function StateManager.registerState(stateName, stateModule)
     return true
 end
 
--- Create a state with consistent methods if any are missing
+-- Create a state with consistent methods if any are missing. Idempotent: safe
+-- to call more than once on the same table (main.lua does, on purpose).
 function StateManager.createState(stateModule)
     local state = stateModule or {}
 
@@ -40,7 +55,7 @@ function StateManager.createState(stateModule)
     end
 
     -- Ensure all required methods exist
-    state.enter = state.enter or function() end
+    state.enter = state.enter or function(params) end
     state.exit = state.exit or function() end
     state.update = state.update or function(dt) end
     state.draw = state.draw or function() end
@@ -49,24 +64,24 @@ function StateManager.createState(stateModule)
     state.textinput = state.textinput or function(text) end
     state.resize = state.resize or function(w, h) end
 
+    -- Deliberately NOT defaulted: `resume`. Its absence is how pop() decides
+    -- between resuming an overlaid state and re-entering it from scratch.
+
     return state
 end
 
--- Load a state module by name and cache it
+-- Load a state module by name and cache it. Slash-form require to match the
+-- rest of the codebase (this used to be dot-form, alone).
 function StateManager.loadState(stateName)
-    -- Check if the state is already registered
     if StateManager.registeredStates[stateName] then
         return StateManager.registeredStates[stateName]
     end
 
-    -- Check if the state is already cached
     if StateManager.stateCache[stateName] then
         return StateManager.stateCache[stateName]
     end
 
-    -- Try to load the state module
-    print("StateManager: Attempting to load state '" .. stateName .. "'")
-    local status, stateModule = pcall(require, "states." .. stateName)
+    local status, stateModule = pcall(require, "states/" .. stateName)
     if not status then
         print("StateManager: Error loading state '" .. stateName .. "': " .. tostring(stateModule))
         return nil
@@ -75,6 +90,16 @@ function StateManager.loadState(stateName)
     local state = StateManager.createState(stateModule)
     StateManager.stateCache[stateName] = state
     return state
+end
+
+-- Resolve a string name (lazy-load + cache) or an already-built state table
+-- (tests, and back()/pop() reusing a state pulled off a stack) into a state.
+local function resolveState(nameOrState)
+    if nameOrState == nil then return nil end
+    if type(nameOrState) == "string" then
+        return StateManager.loadState(nameOrState)
+    end
+    return StateManager.createState(nameOrState)
 end
 
 -- Add current state to history stack
@@ -90,122 +115,220 @@ function StateManager.pushHistory(state)
     end
 end
 
--- Switch to a new state
-function StateManager.switch(newStateOrName)
-    print("StateManager: Switching to state: " .. tostring(newStateOrName))
-
-    -- Allow passing state name as string for lazy loading
-    local newState = newStateOrName
-    if type(newStateOrName) == "string" then
-        -- Check registered states first
-        if StateManager.registeredStates[newStateOrName] then
-            newState = StateManager.registeredStates[newStateOrName]
-        else
-            -- Try loading the state
-            newState = StateManager.loadState(newStateOrName)
-            if not newState then
-                print("StateManager: Failed to switch to state '" .. newStateOrName .. "'")
-                return
-            end
+-- Actually perform exit(old) -> [record history] -> current = new -> enter(new).
+-- `current` is assigned before enter() runs so a throwing enter still leaves
+-- the manager in a valid, usable state rather than half-updated.
+local function performSwitch(newState, params, recordHistory)
+    if StateManager.current and StateManager.current.exit then
+        local ok, err = pcall(StateManager.current.exit)
+        if not ok then
+            print("StateManager: Error during state exit: " .. tostring(err))
         end
     end
 
-    -- Start transition animation
-    StateManager.startTransition(function()
-        -- Execute actual state change after transition starts
-        if StateManager.current and StateManager.current.exit then
-            local success, err = pcall(StateManager.current.exit)
-            if not success then
-                print("StateManager: Error during state exit: " .. tostring(err))
-            end
-        end
-
+    if recordHistory then
         StateManager.pushHistory(StateManager.current)
+    end
 
-        if newState and newState.enter then
-            local success, err = pcall(newState.enter)
-            if not success then
-                print("StateManager: Error during state enter: " .. tostring(err))
-            end
+    StateManager.current = newState
+
+    if newState and newState.enter then
+        local ok, err = pcall(newState.enter, params)
+        if not ok then
+            print("StateManager: Error during state enter: " .. tostring(err))
         end
+    end
+end
 
-        StateManager.current = newState
-        print("StateManager: switched to state '" .. (newState.name or "unnamed") .. "'")
+-- Switch to a new state (by name or table), through the fade transition.
+-- `params` is handed to the new state's enter(params) -- e.g.
+-- switch("shopState", { returnTo = "resultsState" }).
+function StateManager.switch(nameOrState, params)
+    local newState = resolveState(nameOrState)
+    if not newState then
+        print("StateManager: Failed to switch to state '" .. tostring(nameOrState) .. "'")
+        return
+    end
+
+    StateManager.startTransition(function()
+        performSwitch(newState, params, true)
     end)
 end
 
--- Go back to the previous state
+-- Switch without waiting for the fade. For --shot mode and tests, where an
+-- unattended frame loop can't be relied on to drive the transition forward.
+function StateManager.switchImmediate(nameOrState, params)
+    local newState = resolveState(nameOrState)
+    if not newState then
+        print("StateManager: Failed to switch to state '" .. tostring(nameOrState) .. "'")
+        return
+    end
+
+    StateManager.transitioning = false
+    StateManager.transitionTimer = 0
+    StateManager.onTransitionComplete = nil
+    transitionAlpha = 0
+    transitionSwapped = false
+
+    performSwitch(newState, params, true)
+end
+
+-- Go back to the previous state. Does NOT push the state being left back onto
+-- history -- switch() already does that, and re-switching through switch()
+-- here used to double-push, which made back() . back() not actually walk back
+-- two entries.
 function StateManager.back()
-    if #StateManager.history > 0 then
-        local prevState = table.remove(StateManager.history)
-        -- Don't add to history since we're going back
-        StateManager.switch(prevState)
-    else
+    if #StateManager.history == 0 then
         print("StateManager: No state history available")
+        return
+    end
+
+    local prevState = table.remove(StateManager.history)
+
+    StateManager.startTransition(function()
+        performSwitch(prevState, nil, false)
+    end)
+end
+
+-- Push an overlay state on top of the current one without exiting it (the
+-- current state is parked on overlayStack instead). Used for things like a
+-- pause menu, which must not restart the round underneath it.
+function StateManager.push(nameOrState, params)
+    local newState = resolveState(nameOrState)
+    if not newState then
+        print("StateManager: Failed to push state '" .. tostring(nameOrState) .. "'")
+        return
+    end
+
+    table.insert(StateManager.overlayStack, StateManager.current)
+    StateManager.current = newState
+
+    if newState.enter then
+        local ok, err = pcall(newState.enter, params)
+        if not ok then
+            print("StateManager: Error during overlay enter: " .. tostring(err))
+        end
     end
 end
 
--- Start a state transition effect
+-- Pop the active overlay and resume whatever was beneath it. Calls resume()
+-- if the underlying state has one (it wasn't torn down, so re-running enter()
+-- would restart it); falls back to enter() for states that don't define one.
+function StateManager.pop()
+    if #StateManager.overlayStack == 0 then
+        print("StateManager: No overlay to pop")
+        return
+    end
+
+    if StateManager.current and StateManager.current.exit then
+        local ok, err = pcall(StateManager.current.exit)
+        if not ok then
+            print("StateManager: Error during overlay exit: " .. tostring(err))
+        end
+    end
+
+    local under = table.remove(StateManager.overlayStack)
+    StateManager.current = under
+
+    if under then
+        local hook = under.resume or under.enter
+        if hook then
+            local ok, err = pcall(hook)
+            if not ok then
+                print("StateManager: Error during overlay resume: " .. tostring(err))
+            end
+        end
+    end
+end
+
+function StateManager.isOverlayActive()
+    return #StateManager.overlayStack > 0
+end
+
+-- Start a fade transition. `onComplete` runs at the midpoint (screen fully
+-- black), which is where the actual state swap happens so it's never visible.
 function StateManager.startTransition(onComplete)
     StateManager.transitioning = true
     StateManager.transitionTimer = 0
     StateManager.onTransitionComplete = onComplete
     transitionAlpha = 0
-
-    -- Execute the completion callback immediately for now
-    -- (we can restore the animation later once basic functionality works)
-    if StateManager.onTransitionComplete then
-        StateManager.onTransitionComplete()
-        StateManager.onTransitionComplete = nil
-    end
-
-    -- Skip the transition for now
-    StateManager.transitioning = false
+    transitionSwapped = false
 end
 
--- Update the transition animation
+-- Advance the fade. Written so a single large dt (tests forcing completion in
+-- one call, or a hitch) still fires the midpoint swap instead of skipping it.
 function StateManager.updateTransition(dt)
-    if StateManager.transitioning then
-        StateManager.transitionTimer = StateManager.transitionTimer + dt
+    if not StateManager.transitioning then return end
 
-        -- First half: fade to black
-        if StateManager.transitionTimer <= StateManager.transitionDuration / 2 then
-            transitionAlpha = (StateManager.transitionTimer / (StateManager.transitionDuration / 2))
+    StateManager.transitionTimer = StateManager.transitionTimer + dt
+    local half = math.max(StateManager.transitionDuration, 0.0001) / 2
 
-            -- At midpoint, perform the actual state change
-            if transitionAlpha >= 1 and StateManager.onTransitionComplete then
-                StateManager.onTransitionComplete()
-                StateManager.onTransitionComplete = nil
-            end
-            -- Second half: fade from black
-        else
-            transitionAlpha = 1 - ((StateManager.transitionTimer - StateManager.transitionDuration / 2)
-                    / (StateManager.transitionDuration / 2))
-        end
+    if not transitionSwapped and StateManager.transitionTimer >= half then
+        transitionSwapped = true
+        local callback = StateManager.onTransitionComplete
+        StateManager.onTransitionComplete = nil
+        if callback then callback() end
+    end
 
-        -- End transition if complete
-        if StateManager.transitionTimer >= StateManager.transitionDuration then
-            StateManager.transitioning = false
-            transitionAlpha = 0
-        end
+    if StateManager.transitionTimer >= StateManager.transitionDuration then
+        StateManager.transitioning = false
+        transitionSwapped = false
+        transitionAlpha = 0
+    elseif StateManager.transitionTimer <= half then
+        transitionAlpha = StateManager.transitionTimer / half
+    else
+        transitionAlpha = 1 - (StateManager.transitionTimer - half) / half
     end
 end
 
--- Draw the transition effect
+-- Draw the transition effect. Covers the logical 640x360 canvas when the
+-- state on screen is one that draws in logical space (main.lua will have
+-- pushed that canvas already), otherwise covers the real window.
 function StateManager.drawTransition()
-    if transitionAlpha > 0 then
-        love.graphics.setColor(0, 0, 0, transitionAlpha)
-        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-        love.graphics.setColor(1, 1, 1, 1)
+    if transitionAlpha <= 0 then return end
+
+    local w, h
+    if StateManager.current and StateManager.current.logical and Screen.isReady() then
+        w, h = Screen.getWidth(), Screen.getHeight()
+    else
+        w, h = love.graphics.getWidth(), love.graphics.getHeight()
     end
+
+    love.graphics.setColor(0, 0, 0, transitionAlpha)
+    love.graphics.rectangle("fill", 0, 0, w, h)
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Draw the state directly beneath the active overlay, dimmed, so an overlay
+-- (pause menu) reads as sitting on top of the paused game rather than on a
+-- blank background. No-op when no overlay is active.
+function StateManager.drawUnderlay()
+    local under = StateManager.overlayStack[#StateManager.overlayStack]
+    if not under then return end
+
+    if under.draw then
+        local ok, err = pcall(under.draw)
+        if not ok then
+            print("StateManager: Error during underlay draw: " .. tostring(err))
+        end
+    end
+
+    local w, h
+    if under.logical and Screen.isReady() then
+        w, h = Screen.getWidth(), Screen.getHeight()
+    else
+        w, h = love.graphics.getWidth(), love.graphics.getHeight()
+    end
+
+    love.graphics.setColor(0, 0, 0, 0.55)
+    love.graphics.rectangle("fill", 0, 0, w, h)
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Update game state and transitions
 function StateManager.update(dt)
-    -- Update transition animation
     StateManager.updateTransition(dt)
 
-    -- Update current state if we have one
     if StateManager.current and StateManager.current.update then
         local success, err = pcall(StateManager.current.update, dt)
         if not success then
@@ -214,9 +337,13 @@ function StateManager.update(dt)
     end
 end
 
--- Draw the current state and transition effects
+-- Draw the current state (and, if an overlay is active, the dimmed state
+-- beneath it first) plus the transition fade.
 function StateManager.draw()
-    -- Draw current state
+    if StateManager.isOverlayActive() then
+        StateManager.drawUnderlay()
+    end
+
     if StateManager.current and StateManager.current.draw then
         local success, err = pcall(StateManager.current.draw)
         if not success then
@@ -235,12 +362,13 @@ function StateManager.draw()
                 love.graphics.getWidth(), "center")
     end
 
-    -- Draw transition overlay
     StateManager.drawTransition()
 end
 
--- Forward input to current state
+-- Forward input to current state. Dropped entirely while transitioning so a
+-- keypress can't land on a state that's only half swapped-in.
 function StateManager.keypressed(key)
+    if StateManager.transitioning then return end
     if StateManager.current and StateManager.current.keypressed then
         local success, err = pcall(StateManager.current.keypressed, key)
         if not success then
@@ -250,6 +378,7 @@ function StateManager.keypressed(key)
 end
 
 function StateManager.keyreleased(key)
+    if StateManager.transitioning then return end
     if StateManager.current and StateManager.current.keyreleased then
         local success, err = pcall(StateManager.current.keyreleased, key)
         if not success then
@@ -259,6 +388,7 @@ function StateManager.keyreleased(key)
 end
 
 function StateManager.textinput(text)
+    if StateManager.transitioning then return end
     if StateManager.current and StateManager.current.textinput then
         local success, err = pcall(StateManager.current.textinput, text)
         if not success then
