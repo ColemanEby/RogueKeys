@@ -4,10 +4,95 @@
 local FileManager = require("modules/util/fileManager")
 local ConfigManager = require("engine/configManager")
 local KeyboardModel = require("modules/keyboard/keyboardModel")
+local Serialize = require("modules/util/serialize")
 
 local PlayerModel = {}
 PlayerModel.__index = PlayerModel
-_G.MAX_MATCH_HISTORY = 10
+
+-- Stats screens and the WPM-over-time graph both want real history depth.
+PlayerModel.MAX_MATCH_HISTORY = 100
+
+local SAVE_PATH = "save/player.lua"
+
+-- Exposed publicly so callers (and tests) that need to know which stat keys
+-- exist don't have to hand-maintain a second copy of this list.
+PlayerModel.STAT_FIELDS = {
+    "totalPlayTime", "totalSessions", "totalKeystrokes",
+    "totalMistakes", "totalCorrect", "bestAPM",
+    "bestWPM", "bestAccuracy", "bestStreak",
+    "roundsWithoutError", "perfectRounds",
+    "moneyEarned", "moneySpent"
+}
+
+function PlayerModel.backupPathFor(path)
+    return (path:gsub("%.lua$", "_backup.lua"))
+end
+
+-- Bump t[key] to value if value is present and larger than the current max.
+local function bumpMax(t, key, value)
+    if value and value > (t[key] or 0) then
+        t[key] = value
+    end
+end
+
+-- Per-run counters, distinct from the lifetime `stats` table. Reset whenever
+-- a fresh roguelite run begins (see resetProgress/resetRunStats).
+local function freshRunStats()
+    return {
+        keystrokes = 0,
+        mistakes = 0,
+        correct = 0,
+        score = 0,
+        bestStreak = 0,
+        moneyEarned = 0,
+        roundsPlayed = 0,
+    }
+end
+
+-- Collapse a possibly-sparse matchHistory table (holes from a corrupted or
+-- legacy save) into a dense, order-preserving array. Non-table entries are
+-- dropped rather than allowed to throw out of PlayerModel.load.
+local function loadMatchHistory(raw)
+    local result = {}
+    if type(raw) ~= "table" then return result end
+
+    local function appendIfTable(match)
+        if type(match) == "table" then
+            result[#result + 1] = {
+                timestamp = match.timestamp or 0,
+                wpm = match.wpm or 0,
+                accuracy = match.accuracy or 0,
+                keystrokes = match.keystrokes or 0,
+                mistakes = match.mistakes or 0,
+                apm = match.apm or 0,
+                moneyEarned = match.moneyEarned or 0,
+            }
+        end
+    end
+
+    -- Fast path: our own save() always writes a dense array, so a single
+    -- ipairs pass covers every history this module itself produces.
+    local seen = 0
+    for i, match in ipairs(raw) do
+        appendIfTable(match)
+        seen = i
+    end
+
+    -- ipairs stops at the first hole. A corrupted or pre-migration save can
+    -- still be sparse, so sweep any remaining numeric keys in order.
+    local maxIndex = seen
+    for k in pairs(raw) do
+        if type(k) == "number" and k > maxIndex then
+            maxIndex = k
+        end
+    end
+
+    for i = seen + 1, maxIndex do
+        appendIfTable(raw[i])
+    end
+
+    return result
+end
 
 -- Create a new player model
 function PlayerModel.new()
@@ -15,12 +100,12 @@ function PlayerModel.new()
 
     -- Player economy and progression
     local startingMoney = 50
-    
+
     -- Try to get from config, default to 50 if not available
-    local configSuccess, configMoney = pcall(function() 
+    local configSuccess, configMoney = pcall(function()
         return ConfigManager:get("progression.startingMoney", 50)
     end)
-    
+
     if configSuccess and configMoney then
         startingMoney = configMoney
     end
@@ -29,12 +114,14 @@ function PlayerModel.new()
     self.currentRound = 1
     self.maxRoundReached = 1
     self.matchHistory = {}
+    self.dirty = false
+    self.savePath = SAVE_PATH
 
     -- Player equipment - with error handling
     local keyboardSuccess, keyboard = pcall(function()
         return KeyboardModel.new("qwerty")
     end)
-    
+
     if keyboardSuccess and keyboard then
         self.keyboard = keyboard
     else
@@ -46,7 +133,7 @@ function PlayerModel.new()
             description = "Fallback keyboard for error recovery",
             multiplier = 1.0,
             upgrades = {},
-            
+
             -- Add minimal required methods
             upgradeKey = function(self, key, bonus)
                 key = string.lower(key)
@@ -76,10 +163,10 @@ function PlayerModel.new()
         }
         setmetatable(self.keyboard, {__index = self.keyboard})
     end
-    
+
     self.selectedKeyboardLayout = "qwerty"
 
-    -- Player stats
+    -- Player stats (lifetime totals)
     self.stats = {
         totalPlayTime = 0,
         totalSessions = 0,
@@ -96,6 +183,9 @@ function PlayerModel.new()
         moneySpent = 0
     }
 
+    -- Per-run stats, reset at the start of each roguelite run
+    self.runStats = freshRunStats()
+
     -- Session tracking
     self.sessionStartTime = 0
     self.isInSession = false
@@ -107,137 +197,108 @@ end
 function PlayerModel:startSession()
     self.isInSession = true
     self.sessionStartTime = love.timer.getTime()
-    print("PlayerModel: Started new session")
 end
 
--- End the current session and record stats
+-- End the current session and record stats. Does not save to disk itself --
+-- callers finish a batch of mutations (endSession + addMoney is the common
+-- pair) and then call save() once. Use saveIfDirty() as a safety net.
 function PlayerModel:endSession(sessionStats)
-    if not self.isInSession then 
+    if not self.isInSession then
         print("PlayerModel: Warning - endSession called when not in session")
-        return 
+        return false
     end
 
     self.isInSession = false
     local sessionTime = love.timer.getTime() - self.sessionStartTime
 
-    -- Update stats
-    self.stats.totalPlayTime = self.stats.totalPlayTime + sessionTime
-    self.stats.totalSessions = self.stats.totalSessions + 1
+    self.stats.totalPlayTime = (self.stats.totalPlayTime or 0) + sessionTime
+    self.stats.totalSessions = (self.stats.totalSessions or 0) + 1
 
-    -- Add session-specific stats if provided
     if sessionStats then
         local matchData = {}
 
-        -- Update keystroke stats with safety checks
-        if sessionStats.keystrokes and type(sessionStats.keystrokes) == "number" then
-            self.stats.totalKeystrokes = self.stats.totalKeystrokes + sessionStats.keystrokes
+        if type(sessionStats.keystrokes) == "number" then
+            self.stats.totalKeystrokes = (self.stats.totalKeystrokes or 0) + sessionStats.keystrokes
+            self.runStats.keystrokes = (self.runStats.keystrokes or 0) + sessionStats.keystrokes
             matchData.keystrokes = sessionStats.keystrokes
         end
-        
-        if sessionStats.mistakes and type(sessionStats.mistakes) == "number" then
-            self.stats.totalMistakes = self.stats.totalMistakes + sessionStats.mistakes
+
+        if type(sessionStats.mistakes) == "number" then
+            self.stats.totalMistakes = (self.stats.totalMistakes or 0) + sessionStats.mistakes
+            self.runStats.mistakes = (self.runStats.mistakes or 0) + sessionStats.mistakes
             matchData.mistakes = sessionStats.mistakes
         end
-        
-        if sessionStats.correct and type(sessionStats.correct) == "number" then
-            self.stats.totalCorrect = self.stats.totalCorrect + sessionStats.correct
+
+        if type(sessionStats.correct) == "number" then
+            self.stats.totalCorrect = (self.stats.totalCorrect or 0) + sessionStats.correct
+            self.runStats.correct = (self.runStats.correct or 0) + sessionStats.correct
         end
 
-        -- Log what we're recording for debugging
-        print("PlayerModel: Keystrokes: " .. (sessionStats.keystrokes or 0) .. 
-              ", Mistakes: " .. (sessionStats.mistakes or 0) .. 
-              ", Correct: " .. (sessionStats.correct or 0))
+        if sessionStats.apm then matchData.apm = sessionStats.apm end
+        bumpMax(self.stats, "bestAPM", sessionStats.apm)
 
-        if sessionStats.apm then
-            matchData.apm = sessionStats.apm
-        end
-        -- Update best values
-        if sessionStats.apm and sessionStats.apm > self.stats.bestAPM then
-            self.stats.bestAPM = sessionStats.apm
-        end
+        if sessionStats.wpm then matchData.wpm = sessionStats.wpm end
+        bumpMax(self.stats, "bestWPM", sessionStats.wpm)
 
-        if sessionStats.wpm then
-            matchData.wpm = sessionStats.wpm
-        end
-        if sessionStats.wpm and sessionStats.wpm > self.stats.bestWPM then
-            self.stats.bestWPM = sessionStats.wpm
+        if sessionStats.accuracy then matchData.accuracy = sessionStats.accuracy end
+        bumpMax(self.stats, "bestAccuracy", sessionStats.accuracy)
+
+        bumpMax(self.stats, "bestStreak", sessionStats.longestStreak)
+        bumpMax(self.runStats, "bestStreak", sessionStats.longestStreak)
+
+        if sessionStats.score and type(sessionStats.score) == "number" then
+            self.runStats.score = (self.runStats.score or 0) + sessionStats.score
         end
 
-        if sessionStats.accuracy then
-            matchData.accuracy = sessionStats.accuracy
+        -- Perfect round: no mistakes across at least one keystroke.
+        if sessionStats.mistakes == 0 and (sessionStats.keystrokes or 0) > 0 then
+            self.stats.roundsWithoutError = (self.stats.roundsWithoutError or 0) + 1
+            self.stats.perfectRounds = (self.stats.perfectRounds or 0) + 1
         end
 
-        if sessionStats.accuracy and sessionStats.accuracy > self.stats.bestAccuracy then
-            self.stats.bestAccuracy = sessionStats.accuracy
-        end
-
-        if sessionStats.longestStreak and sessionStats.longestStreak > self.stats.bestStreak then
-            self.stats.bestStreak = sessionStats.longestStreak
-        end
-
-        if sessionStats.mistakes then
-            matchData.mistakes = sessionStats.mistakes
-        end
-        -- Check for perfect round
-        if sessionStats.mistakes == 0 and sessionStats.keystrokes > 0 then
-            self.stats.roundsWithoutError = self.stats.roundsWithoutError + 1
-            self.stats.perfectRounds = self.stats.perfectRounds + 1
-        end
-        if sessionStats.moneyEarned then
+        if type(sessionStats.moneyEarned) == "number" then
             matchData.moneyEarned = sessionStats.moneyEarned
-        end
-        -- Record money earned
-        if sessionStats.moneyEarned and type(sessionStats.moneyEarned) == "number" then
-            self.stats.moneyEarned = self.stats.moneyEarned + sessionStats.moneyEarned
+            self.stats.moneyEarned = (self.stats.moneyEarned or 0) + sessionStats.moneyEarned
+            self.runStats.moneyEarned = (self.runStats.moneyEarned or 0) + sessionStats.moneyEarned
         end
 
+        self.runStats.roundsPlayed = (self.runStats.roundsPlayed or 0) + 1
 
-        local curMatchHistoryCount = #self.matchHistory
-        print("Match history count before saving current match: " .. curMatchHistoryCount)
         matchData.timestamp = os.time()
         self:addMatchToHistory(matchData)
-        local matchHistoryCount = #self.matchHistory
-        print("Match history count after saving current match: " .. matchHistoryCount)
     else
         print("PlayerModel: Warning - No session stats provided")
     end
 
-    -- Save player data immediately after updating stats
-    local saveSuccess = self:save()
-    print("PlayerModel: Session stats saved: " .. (saveSuccess and "Success" or "Failed"))
-    
-    return saveSuccess
+    self:markDirty()
+    return true
 end
 
+-- Insert newest-first and trim from the tail (oldest) once over the cap.
 function PlayerModel:addMatchToHistory(matchData)
-        -- Shift all existing entries one position forward
-        for i = _G.MAX_MATCH_HISTORY, 2, -1 do
-            self.matchHistory[i] = self.matchHistory[i-1]
-        end
-        
-        -- Insert new match at the first position
-        self.matchHistory[1] = matchData
-        
-        -- If we exceeded maxLength, remove the last entry
-        if #self.matchHistory > _G.MAX_MATCH_HISTORY then
-            self.matchHistory[_G.MAX_MATCH_HISTORY + 1] = nil
-        end
-        
+    table.insert(self.matchHistory, 1, matchData)
+
+    while #self.matchHistory > PlayerModel.MAX_MATCH_HISTORY do
+        table.remove(self.matchHistory)
+    end
+end
+
+-- Mark the model as having unsaved changes. save() clears this; saveIfDirty()
+-- checks it so a caller that forgets to save explicitly doesn't lose data.
+function PlayerModel:markDirty()
+    self.dirty = true
 end
 
 -- Add money to the player's total
 function PlayerModel:addMoney(amount)
-    if not amount or type(amount) ~= "number" or amount <= 0 then 
-        return self.totalMoney 
+    if not amount or type(amount) ~= "number" or amount <= 0 then
+        return self.totalMoney
     end
-    
+
     self.totalMoney = self.totalMoney + amount
-    self.stats.moneyEarned = self.stats.moneyEarned + amount
-    print("PlayerModel: Added " .. amount .. " money, total now: " .. self.totalMoney)
-    
-    -- Save after money changes
-    self:save()
-    
+    self.stats.moneyEarned = (self.stats.moneyEarned or 0) + amount
+    self:markDirty()
+
     return self.totalMoney
 end
 
@@ -246,37 +307,43 @@ function PlayerModel:spendMoney(amount)
     if not amount or type(amount) ~= "number" then
         return false
     end
-    
+
     if self.totalMoney >= amount then
         self.totalMoney = self.totalMoney - amount
-        self.stats.moneySpent = self.stats.moneySpent + amount
-        print("PlayerModel: Spent " .. amount .. " money, remaining: " .. self.totalMoney)
-        
-        -- Save after money changes
-        self:save()
-        
+        self.stats.moneySpent = (self.stats.moneySpent or 0) + amount
+        self:markDirty()
+
         return true
     end
-    print("PlayerModel: Not enough money to spend " .. amount)
     return false
 end
 
--- Change the player's keyboard
+-- Change the player's keyboard, carrying existing upgrades across the swap.
+-- KeyboardModel.new() always starts with empty upgrades, so without this a
+-- layout change silently destroyed every key upgrade the player owned.
 function PlayerModel:changeKeyboard(keyboardLayout)
     if not keyboardLayout then return self.keyboard end
-    
+
+    local previousUpgrades = self.keyboard and self.keyboard.upgrades
+
     local success, keyboard = pcall(function()
         return KeyboardModel.new(keyboardLayout)
     end)
-    
+
     if success and keyboard then
+        if type(previousUpgrades) == "table" then
+            for key, bonus in pairs(previousUpgrades) do
+                keyboard.upgrades[key] = bonus
+            end
+        end
+
         self.selectedKeyboardLayout = keyboardLayout
         self.keyboard = keyboard
         print("PlayerModel: Changed keyboard to " .. keyboardLayout)
-        
+
         -- Save after keyboard changes
         self:save()
-        
+
         return self.keyboard
     else
         print("PlayerModel: Failed to change keyboard, keeping current one")
@@ -288,20 +355,20 @@ end
 function PlayerModel:getRequiredScore()
     local baseRequirement = 20
     local scaleFactor = 1.2
-    
+
     -- Try to get from config
-    local configSuccess, configBase = pcall(function() 
+    local configSuccess, configBase = pcall(function()
         return ConfigManager:get("progression.baseRequiredScore", 20)
     end)
-    
+
     if configSuccess and configBase then
         baseRequirement = configBase
     end
-    
-    local scaleSuccess, configScale = pcall(function() 
+
+    local scaleSuccess, configScale = pcall(function()
         return ConfigManager:get("progression.roundDifficultyScale", 1.2)
     end)
-    
+
     if scaleSuccess and configScale then
         scaleFactor = configScale
     end
@@ -314,17 +381,15 @@ function PlayerModel:advanceRound(score)
     if not score or type(score) ~= "number" then
         return false
     end
-    
+
     local requiredScore = self:getRequiredScore()
 
     if score >= requiredScore then
         self.currentRound = self.currentRound + 1
-        print("PlayerModel: Advanced to round " .. self.currentRound)
 
         -- Update max round reached
         if self.currentRound > self.maxRoundReached then
             self.maxRoundReached = self.currentRound
-            print("PlayerModel: New max round reached: " .. self.maxRoundReached)
         end
 
         -- Save after advancing round
@@ -335,10 +400,10 @@ function PlayerModel:advanceRound(score)
     return false
 end
 
--- Reset progress (e.g., after game over)
+-- Reset progress (e.g., after game over) and start a fresh run's stats.
 function PlayerModel:resetProgress()
     self.currentRound = 1
-    print("PlayerModel: Progress reset")
+    self:resetRunStats()
     self:save()
     return self.currentRound
 end
@@ -354,7 +419,7 @@ function PlayerModel:getCurrentDifficulty()
     end
 end
 
--- Get complete stats
+-- Get complete lifetime stats
 function PlayerModel:getStats()
     return self.stats
 end
@@ -363,8 +428,26 @@ function PlayerModel:getMatchHistory()
     return self.matchHistory
 end
 
--- Improved save method with better error handling
-function PlayerModel:save()
+-- Per-run stats: reset at the start of a run, consumed by the run summary /
+-- game-over screen and the run mutator system.
+function PlayerModel:getRunStats()
+    return self.runStats
+end
+
+function PlayerModel:resetRunStats()
+    self.runStats = freshRunStats()
+    return self.runStats
+end
+
+-- Save method. Callers invoke this explicitly after a batch of mutations;
+-- addMoney/spendMoney only mark the model dirty so a completed round does not
+-- trigger multiple full serializations + disk writes.
+-- `path` is an optional one-off override; normally this writes to whatever
+-- path the player was loaded from (self.savePath), so callers never need to
+-- thread a path through every mutator that happens to save.
+function PlayerModel:save(path)
+    path = path or self.savePath or SAVE_PATH
+
     -- Prepare data structure for serialization
     local data = {
         totalMoney = self.totalMoney,
@@ -375,12 +458,12 @@ function PlayerModel:save()
         matchHistory = self.matchHistory,
         stats = self.stats
     }
-    
+
     -- Safely serialize keyboard
     local keyboardSuccess, serializedKeyboard = pcall(function()
         return self.keyboard:serialize()
     end)
-    
+
     if keyboardSuccess and serializedKeyboard then
         data.keyboard = serializedKeyboard
     else
@@ -394,205 +477,163 @@ function PlayerModel:save()
         }
     end
 
-    -- Serialize to string
-    local serialized = "return " .. self:serializeTable(data)
-
-    -- Ensure save directory exists
-    FileManager.ensureDirectoryExists("save")
-    
-    -- Try to save using FileManager
-    local success = FileManager.saveToFile("save/player.lua", serialized)
-    
-    if not success then
-        print("PlayerModel: ERROR - Failed to save player data")
-        
-        -- Try a last resort direct save
-        local directSuccess = love.filesystem.write("save/player_backup.lua", serialized)
-        if directSuccess then
-            print("PlayerModel: Created backup save file instead")
-            return true
-        end
-        
+    -- Serialize to string. Unlike the old hand-rolled serializer, a failure
+    -- here does NOT get papered over with a partial write -- it fails loudly
+    -- and leaves the on-disk save untouched.
+    local serialized, encodeErr = Serialize.encode(data)
+    if not serialized then
+        print("PlayerModel: ERROR - Failed to serialize player data: " .. tostring(encodeErr))
         return false
     end
 
-    print("PlayerModel: Successfully saved player data")
+    -- Ensure save directory exists
+    FileManager.ensureDirectoryExists("save")
+
+    -- Try to save using FileManager
+    local success = FileManager.saveToFile(path, serialized)
+
+    if not success then
+        print("PlayerModel: ERROR - Failed to save player data")
+
+        -- Try a last resort direct save
+        local directSuccess = love.filesystem.write(PlayerModel.backupPathFor(path), serialized)
+        if directSuccess then
+            print("PlayerModel: Created backup save file instead")
+            self.dirty = false
+            return true
+        end
+
+        return false
+    end
+
+    self.dirty = false
     return true
 end
 
+-- Safety net for callers that mutate the model (addMoney/spendMoney) without
+-- following up with an explicit save() -- no data is lost, but a run of
+-- mutations still only costs one disk write.
+function PlayerModel:saveIfDirty(path)
+    if not self.dirty then return true end
+    return self:save(path)
+end
+
 -- Enhanced load method with improved error handling
-function PlayerModel.load()
-    local dataPath = "save/player.lua"
-    local backupPath = "save/player_backup.lua"
-    
+function PlayerModel.load(path)
+    path = path or SAVE_PATH
+
     -- First try to load the primary save file
-    local content = FileManager.loadFromFile(dataPath)
-    
+    local content = FileManager.loadFromFile(path)
+
     -- If primary save failed, try the backup
     if not content then
-        print("PlayerModel: Primary save not found, trying backup...")
-        content = FileManager.loadFromFile(backupPath)
+        content = FileManager.loadFromFile(PlayerModel.backupPathFor(path))
     end
-    
-    -- If no save data found, create a new player
+
+    -- If no save data found, create a new player. Still bind savePath so any
+    -- future save() from this instance lands at the path it was asked for.
     if not content then
-        print("PlayerModel: No save data found, creating new player")
-        return PlayerModel.new()
+        local player = PlayerModel.new()
+        player.savePath = path
+        return player
     end
 
-    -- Parse the Lua code with error handling
-    local func, err = load(content)
-    if not func then
-        print("PlayerModel: Error parsing save file: " .. tostring(err))
-        return PlayerModel.new()
+    -- Current format: a sandboxed, serpent-produced chunk.
+    local data = Serialize.decode(content)
+    local migrated = false
+
+    if not data then
+        -- Fall back to the legacy hand-rolled format (a plain, unsandboxed
+        -- Lua chunk) so an old save is never lost. Re-saved below so this
+        -- only ever has to happen once per file.
+        local func, loadErr = load(content)
+        if func then
+            local ok, legacyData = pcall(func)
+            if ok and type(legacyData) == "table" then
+                data = legacyData
+                migrated = true
+            else
+                print("PlayerModel: Error executing legacy save file: " .. tostring(legacyData))
+            end
+        else
+            print("PlayerModel: Error parsing save file: " .. tostring(loadErr))
+        end
     end
 
-    -- Execute the function to get the data table
-    local success, data = pcall(func)
-    if not success or type(data) ~= "table" then
-        print("PlayerModel: Error executing save file: " .. tostring(data))
-        return PlayerModel.new()
+    -- Corrupt or truncated save: fall back to a fresh player rather than
+    -- throwing out of PlayerModel.load.
+    if type(data) ~= "table" then
+        print("PlayerModel: Save file is unreadable, starting a fresh player")
+        local player = PlayerModel.new()
+        player.savePath = path
+        return player
     end
 
     -- Create a new player model
     local player = PlayerModel.new()
+    player.savePath = path
 
     -- Apply saved data with safety checks
-    if data.totalMoney and type(data.totalMoney) == "number" then
+    if type(data.totalMoney) == "number" then
         player.totalMoney = data.totalMoney
     end
-    
-    if data.level and type(data.level) == "number" then
+
+    if type(data.level) == "number" then
         player.level = data.level
     end
-    
-    if data.currentRound and type(data.currentRound) == "number" then
+
+    if type(data.currentRound) == "number" then
         player.currentRound = data.currentRound
     end
-    
-    if data.maxRoundReached and type(data.maxRoundReached) == "number" then
+
+    if type(data.maxRoundReached) == "number" then
         player.maxRoundReached = data.maxRoundReached
     end
-    
-    if data.selectedKeyboardLayout and type(data.selectedKeyboardLayout) == "string" then
+
+    if type(data.selectedKeyboardLayout) == "string" then
         player.selectedKeyboardLayout = data.selectedKeyboardLayout
     end
 
     -- Load keyboard data with error handling
-    if data.keyboard and type(data.keyboard) == "table" then
+    if type(data.keyboard) == "table" then
         local keyboardSuccess, keyboard = pcall(function()
             return KeyboardModel.deserialize(data.keyboard)
         end)
-        
+
         if keyboardSuccess and keyboard then
             player.keyboard = keyboard
         else
             print("PlayerModel: Failed to deserialize keyboard, using default")
             player.keyboard = KeyboardModel.new(player.selectedKeyboardLayout)
         end
+    elseif player.selectedKeyboardLayout ~= "qwerty" then
+        -- No keyboard block saved, but a non-default layout was selected --
+        -- rebuild it rather than silently keep the qwerty default.
+        local success, keyboard = pcall(KeyboardModel.new, player.selectedKeyboardLayout)
+        if success and keyboard then
+            player.keyboard = keyboard
+        end
     end
 
-    -- Load stats with safety checks
-    if data.stats and type(data.stats) == "table" then
-        -- Process each stat individually for safety
-        local statsList = {
-            "totalPlayTime", "totalSessions", "totalKeystrokes",
-            "totalMistakes", "totalCorrect", "bestAPM",
-            "bestWPM", "bestAccuracy", "bestStreak",
-            "roundsWithoutError", "perfectRounds",
-            "moneyEarned", "moneySpent"
-        }
-        
-        for _, statName in ipairs(statsList) do
-            if data.stats[statName] and type(data.stats[statName]) == "number" then
+    -- Load stats with safety checks -- fields missing from an older save
+    -- keep whatever PlayerModel.new() already initialized them to.
+    if type(data.stats) == "table" then
+        for _, statName in ipairs(PlayerModel.STAT_FIELDS) do
+            if type(data.stats[statName]) == "number" then
                 player.stats[statName] = data.stats[statName]
             end
         end
     end
-    print("============= Attempting to load match history =============")
-    player.matchHistory = {}
-    -- Load Match History
-    if data.matchHistory and type(data.matchHistory) == "table" then
-        -- print("Loading match history")
-        for index, match in pairs(data.matchHistory) do
-            -- Create a new table for each match entry
-            player.matchHistory[index] = {
-                timestamp = match.timestamp,
-                wpm = match.wpm,
-                accuracy = match.accuracy,
-                keystrokes = match.keystrokes,
-                mistakes = match.mistakes,
-                apm = match.apm,
-                moneyEarned = match.moneyEarned
-            }
-            -- print("History added for match " .. index)
-        end
+
+    player.matchHistory = loadMatchHistory(data.matchHistory)
+
+    if migrated then
+        print("PlayerModel: Migrated legacy save format")
+        player.dirty = true
+        player:save()
     end
 
-    print("PlayerModel: Successfully loaded player data")
-    
-    -- Debug print loaded stats
-    print("PlayerModel: Loaded stats - Total sessions: " .. player.stats.totalSessions .. 
-          ", Total keystrokes: " .. player.stats.totalKeystrokes)
-          
     return player
-end
-
--- Serialize a table to a string (more robust version)
-function PlayerModel:serializeTable(tbl, indent)
-    if not tbl then return "{}" end
-    if not indent then indent = 0 end
-    
-    local result = "{\n"
-    
-    -- Use pcall to catch any serialization errors
-    local success, serialized = pcall(function()
-        local innerResult = ""
-        for k, v in pairs(tbl) do
-            innerResult = innerResult .. string.rep("    ", indent + 1)
-    
-            -- Handle the key
-            if type(k) == "number" then
-                -- Array index
-                innerResult = innerResult .. ""
-            elseif type(k) == "string" then
-                -- String key needs quotes if not a valid identifier
-                if k:match("^[%a_][%w_]*$") then
-                    innerResult = innerResult .. k .. " = "
-                else
-                    innerResult = innerResult .. "[\"" .. k .. "\"] = "
-                end
-            else
-                -- Other key types in brackets
-                innerResult = innerResult .. "[" .. tostring(k) .. "] = "
-            end
-    
-            -- Handle the value based on type
-            if type(v) == "table" then
-                innerResult = innerResult .. self:serializeTable(v, indent + 1)
-            elseif type(v) == "string" then
-                innerResult = innerResult .. "\"" .. v:gsub("\"", "\\\"") .. "\""
-            elseif type(v) == "number" or type(v) == "boolean" then
-                innerResult = innerResult .. tostring(v)
-            else
-                innerResult = innerResult .. "\"" .. tostring(v) .. "\""
-            end
-    
-            innerResult = innerResult .. ",\n"
-        end
-        return innerResult
-    end)
-    
-    if success then
-        result = result .. serialized
-    else
-        print("PlayerModel: Error during serialization: " .. tostring(serialized))
-        result = result .. string.rep("    ", indent + 1) .. "-- Serialization error\n"
-    end
-
-    -- Close the table
-    result = result .. string.rep("    ", indent) .. "}"
-    return result
 end
 
 return PlayerModel
