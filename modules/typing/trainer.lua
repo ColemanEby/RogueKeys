@@ -1,225 +1,360 @@
 -- modules/typing/trainer.lua
--- Enhanced typing trainer with more features and extensibility
+-- The typing line: input handling, scoring, and the juice pass (shake, floating
+-- score numbers, streak meter/particles). This is the moment-to-moment feel of
+-- the whole game, so every visual choice here routes through Theme and every
+-- score path goes through the shared keyboardModel:computeKeyScore contract
+-- (with a legacy fallback for worktrees that predate it).
 
-local ResourceManager = require("engine/resourceManager")
+local Theme = require("modules/ui/theme")
+local Audio = require("modules/audio/audio")
 
 local TypingTrainer = {}
 TypingTrainer.__index = TypingTrainer
 
--- Create a new typing trainer instance
+local VOWELS = { a = true, e = true, i = true, o = true, u = true }
+
+local FLASH_PEAK = 0.5
+local FLASH_DECAY = 2.2         -- alpha/sec
+local CARET_EASE_SPEED = 18     -- higher = snappier caret
+local POPUP_LIFE = 0.7
+local POPUP_RISE = 34
+local STREAK_MILESTONE = 10
+local TIMED_BURST_DEFAULT = 20  -- used only if a burst round has no configured limit
+local DECAY_BASE = 1.0          -- seconds of idle before the caret's own char starts fading
+local DECAY_STEP = 0.3          -- extra idle seconds required per character further ahead
+local DECAY_FADE = 1.0          -- fade duration once decay starts
+
+-- Greedy word-wrap by character count (monospace assumption: caret and error
+-- math both reduce to `x = n * advance`). Only breaks mid-word when a single
+-- word is wider than the whole line. Pure function of text + width in chars,
+-- so it is unit-testable without a graphics context.
+local function wrapWords(text, charsPerLine)
+    charsPerLine = math.max(1, math.floor(charsPerLine or 1))
+    local n = #text
+    if n == 0 then
+        return { { startIndex = 1, endIndex = 0 } }
+    end
+
+    local lines = {}
+    local lineStart = 1
+    local col = 0
+    local i = 1
+
+    while i <= n do
+        local wordStart, wordEnd = text:find("%S+", i)
+        if not wordStart then break end -- only trailing spaces remain
+
+        -- Walk the gap (spaces) up to the next word, wrapping mid-gap if needed.
+        while i < wordStart do
+            if col >= charsPerLine then
+                lines[#lines + 1] = { startIndex = lineStart, endIndex = i - 1 }
+                lineStart = i
+                col = 0
+            end
+            col = col + 1
+            i = i + 1
+        end
+
+        local wordLen = wordEnd - wordStart + 1
+
+        if wordLen > charsPerLine then
+            -- Word alone doesn't fit a full line: hard-break through it.
+            if col > 0 then
+                lines[#lines + 1] = { startIndex = lineStart, endIndex = i - 1 }
+                lineStart = i
+                col = 0
+            end
+            local remaining = wordLen
+            while remaining > 0 do
+                local take = math.min(charsPerLine, remaining)
+                lines[#lines + 1] = { startIndex = i, endIndex = i + take - 1 }
+                i = i + take
+                remaining = remaining - take
+            end
+            lineStart = i
+            col = 0
+        else
+            if col > 0 and col + wordLen > charsPerLine then
+                lines[#lines + 1] = { startIndex = lineStart, endIndex = i - 1 }
+                lineStart = i
+                col = 0
+            end
+            col = col + wordLen
+            i = wordEnd + 1
+        end
+    end
+
+    lines[#lines + 1] = { startIndex = lineStart, endIndex = n }
+    return lines
+end
+
+-- Read the difficulty config (owned by the run/config unit). Defensive
+-- because a worktree may not have it, or ConfigManager may not be init'd yet
+-- (e.g. in headless tests).
+local function getDifficultyConfig(difficulty)
+    local ok, ConfigManager = pcall(require, "engine/configManager")
+    if not ok or not ConfigManager then return nil end
+    local success, diff = pcall(function() return ConfigManager:getDifficulty(difficulty) end)
+    if success then return diff end
+    return nil
+end
+
+-- The switch type drives the key-thock sample. keyboardModel may not expose
+-- this yet, so fall back to a plain linear switch.
+local function resolveSwitchType(keyboardModel, char)
+    if keyboardModel and keyboardModel.getKeySwitchType then
+        local ok, result = pcall(function() return keyboardModel:getKeySwitchType(char) end)
+        if ok and result then return result end
+    end
+    return "linear"
+end
+
+-- Create a new typing trainer instance.
 function TypingTrainer.new(options)
     local self = setmetatable({}, TypingTrainer)
-
     options = options or {}
 
-    -- Target text and options
     self.text = options.text or "Default text"
     self.displayName = options.displayName or "Standard Typing Challenge"
     self.difficulty = options.difficulty or "medium"
-    self.timeLimit = options.timeLimit or 0  -- 0 means no time limit
-    self.keyboardModel = options.keyboardModel  -- Optional reference to player's keyboard
+    self.keyboardModel = options.keyboardModel
+    self.keyboardView = options.keyboardView
+    self.round = options.round or 1
+
+    self.mutators = {}
+    for _, id in ipairs(options.mutators or {}) do
+        self.mutators[id] = true
+    end
+
+    local diffConfig = getDifficultyConfig(self.difficulty)
+    self.baseScorePerChar = options.baseScorePerChar or (diffConfig and diffConfig.baseScorePerChar) or 1
+    self.timeLimit = options.timeLimit or (diffConfig and diffConfig.timeLimit) or 0
+    if self.mutators.timed_burst and self.timeLimit <= 0 then
+        self.timeLimit = TIMED_BURST_DEFAULT
+    end
 
     -- Typing progress state
-    self.typed = {}           -- Stores each keystroke as { char, correct = true/false }
-    self.startTime = love.timer.getTime()
+    self.typed = {}            -- { char, correct, points, procs } per keystroke
+    self.startTime = nil       -- set on first keystroke, not construction -- see below
     self.finished = false
     self.correctCount = 0
     self.mistakes = 0
     self.currentStreak = 0
     self.longestStreak = 0
-    self.score = 0            -- Accumulated score
+    self.lastMilestoneStreak = 0
+    self.lastChar = nil
+    self.idleTime = 0
+    self.score = 0
     self.highscore = options.highscore or 0
 
-    -- UI options
-    self.uiStyle = options.uiStyle or {
-        backgroundColor = {0.12, 0.12, 0.15, 1.0},
-        titleColor = {1.0, 1.0, 1.0, 1.0},
-        promptColor = {0.8, 0.8, 0.8, 1.0},
-        correctColor = {0.2, 0.9, 0.2, 1.0},
-        incorrectColor = {0.9, 0.2, 0.2, 1.0},
-        cursorColor = {0.2, 0.6, 1.0, 1.0},
-        statsColor = {0.9, 0.9, 0.9, 1.0},
-        statsBgColor = {0.2, 0.2, 0.2, 0.8},
-        padding = 20,
-        titleFont = "default",
-        titleFontSize = 24,
-        textFont = "default",
-        textFontSize = 18,
-        statsFont = "default",
-        statsFontSize = 16
-    }
-
-    -- Load fonts
-    self:loadFonts()
-
-    -- Event callbacks
+    -- Event callbacks -- other systems (audio, meta-progression, achievements)
+    -- hook these instead of reaching into trainer internals.
     self.onKeyPressed = options.onKeyPressed
     self.onKeyMissed = options.onKeyMissed
+    self.onCrit = options.onCrit
     self.onComplete = options.onComplete
 
-    -- Timers and animation
+    -- Juice state
     self.cursorBlinkTimer = 0
     self.cursorVisible = true
-    self.shakingText = false
-    self.shakeTimer = 0
-    self.shakeIntensity = 0
+    self.shake = { timer = 0, duration = 0.3, intensity = 5 }
+    self.flashAlpha = 0
+    self.popups = {}
+    self.pendingBurst = false
+    self.particleSystem = nil
+    self.caretDrawX, self.caretDrawY = nil, nil
 
     return self
 end
 
--- Load fonts for rendering
-function TypingTrainer:loadFonts()
-    local style = self.uiStyle
-    self.titleFont = ResourceManager:getFont(style.titleFont, style.titleFontSize)
-    self.textFont = ResourceManager:getFont(style.textFont, style.textFontSize)
-    self.statsFont = ResourceManager:getFont(style.statsFont, style.statsFontSize)
+-- Compute the score for a correct keystroke, using the shared item-scoring
+-- contract when available and falling back to the legacy per-key-bonus path
+-- otherwise (some worktrees won't have computeKeyScore yet).
+function TypingTrainer:scoreKeystroke(char)
+    local ctx = {
+        streak = self.currentStreak,
+        prevChar = self.lastChar,
+        round = self.round,
+        isVowel = VOWELS[char:lower()] or false,
+    }
+
+    if self.keyboardModel and self.keyboardModel.computeKeyScore then
+        local ok, points, procs = pcall(function()
+            return self.keyboardModel:computeKeyScore(char, ctx)
+        end)
+        if ok and points then
+            return points, procs or {}
+        end
+    end
+
+    local points = self.baseScorePerChar
+    if self.keyboardModel then
+        local multiplier = 1.0
+        if self.keyboardModel.getTotalMultiplier then
+            multiplier = self.keyboardModel:getTotalMultiplier() or 1.0
+        end
+        local bonus = 0
+        if self.keyboardModel.getKeyBonus then
+            bonus = self.keyboardModel:getKeyBonus(char:lower()) or 0
+        end
+        points = (self.baseScorePerChar * multiplier) + bonus
+    end
+    return points, {}
 end
 
--- Handle input from the user
+-- Handle a single character of input.
 function TypingTrainer:handleInput(char)
     if self.finished then return end
+
+    -- The clock starts on the first keystroke, not construction, so reading
+    -- the prompt doesn't eat into WPM/APM.
+    if not self.startTime then
+        self.startTime = love.timer.getTime()
+    end
+    self.idleTime = 0
 
     local index = #self.typed + 1
     local expectedChar = self.text:sub(index, index)
     local isCorrect = (char == expectedChar)
-    table.insert(self.typed, { char = char, correct = isCorrect })
+    local points, procs = 0, {}
 
     if isCorrect then
-        self.correctCount = self.correctCount + 1
         self.currentStreak = self.currentStreak + 1
-
         if self.currentStreak > self.longestStreak then
             self.longestStreak = self.currentStreak
         end
 
-        -- Base score for a correct keystroke
-        local baseScore = 1
+        points, procs = self:scoreKeystroke(char)
+        self.correctCount = self.correctCount + 1
+        self.score = self.score + points
 
-        -- Add keyboard bonus if available
-        if self.keyboardModel then
-            -- Global multiplier
-            local multiplier = self.keyboardModel:getTotalMultiplier() or 1.0
+        self:spawnPopup(points, procs)
+        self:checkStreakMilestone()
 
-            -- Per-key bonus
-            local keyLower = char:lower()
-            local bonus = self.keyboardModel:getKeyBonus(keyLower) or 0
-
-            -- Apply both bonuses
-            self.score = self.score + (baseScore * multiplier) + bonus
-        else
-            self.score = self.score + baseScore
+        if procs.crit then
+            Audio.playSfx("crit")
+            if self.onCrit then self.onCrit(char, points) end
         end
-
-        -- Trigger callback if provided
-        if self.onKeyPressed then
-            self.onKeyPressed(char, true)
+        if procs.coins and procs.coins > 0 then
+            Audio.playSfx("coin")
         end
     else
         self.mistakes = self.mistakes + 1
         self.currentStreak = 0
-
-        -- Shake effect for incorrect keypress
+        self.lastMilestoneStreak = 0 -- rebuilding the streak should re-trigger milestones
         self:startShake(0.3, 5)
 
-        -- Trigger callback if provided
         if self.onKeyMissed then
             self.onKeyMissed(char, expectedChar)
         end
     end
 
-    -- Auto-finish if we've typed the entire text
+    table.insert(self.typed, { char = char, correct = isCorrect, points = points, procs = procs })
+    self.lastChar = char
+
+    Audio.playKey(resolveSwitchType(self.keyboardModel, char), isCorrect)
+
+    if self.keyboardView and self.keyboardView.activateKey then
+        pcall(function() self.keyboardView:activateKey(char) end)
+    end
+
+    if self.onKeyPressed then
+        self.onKeyPressed(char, isCorrect)
+    end
+
+    -- Never overtype: finishing exactly at text length is the only way out.
     if #self.typed >= #self.text then
         self:finish()
     end
 end
 
--- Handle backspace key
+-- Handle backspace. No-ops entirely under the no_backspace mutator.
 function TypingTrainer:backspace()
     if self.finished then return end
+    if self.mutators.no_backspace then return end
     if #self.typed == 0 then return end
 
     local removed = table.remove(self.typed)
 
     if removed.correct then
         self.correctCount = self.correctCount - 1
-
-        -- Adjust score (approximate, as we don't store the exact bonus per keystroke)
-        if self.keyboardModel then
-            local keyLower = removed.char:lower()
-            local bonus = self.keyboardModel:getKeyBonus(keyLower) or 0
-            local multiplier = self.keyboardModel:getTotalMultiplier() or 1.0
-
-            self.score = self.score - ((1 * multiplier) + bonus)
-        else
-            self.score = self.score - 1
-        end
+        self.score = self.score - (removed.points or 0)
     else
         self.mistakes = self.mistakes - 1
     end
 
-    -- Recalculate current streak
-    local streak = 0
-    for i = #self.typed, 1, -1 do
+    self.lastChar = self.typed[#self.typed] and self.typed[#self.typed].char or nil
+
+    -- Recompute both streaks from the remaining history rather than trying to
+    -- patch them incrementally -- that incremental approach is exactly what
+    -- left longestStreak inflated after a mistake was backed out.
+    self:recalculateStreaks()
+end
+
+function TypingTrainer:recalculateStreaks()
+    local current, longest = 0, 0
+    for i = 1, #self.typed do
         if self.typed[i].correct then
-            streak = streak + 1
+            current = current + 1
+            if current > longest then longest = current end
         else
-            break
+            current = 0
         end
     end
-    self.currentStreak = streak
+    self.currentStreak = current
+    self.longestStreak = longest
+
+    -- Cap the milestone watermark to what's actually reachable at the new
+    -- streak so climbing back up to a previously-hit milestone re-triggers.
+    local reachable = math.floor(current / STREAK_MILESTONE) * STREAK_MILESTONE
+    if reachable < self.lastMilestoneStreak then
+        self.lastMilestoneStreak = reachable
+    end
 end
 
--- Finish the typing session
+-- Finish the typing session.
 function TypingTrainer:finish()
-    if not self.finished then
-        self.finished = true
-        self.endTime = love.timer.getTime()
+    if self.finished then return end
+    self.finished = true
+    self.endTime = love.timer.getTime()
+    if not self.startTime then
+        -- Finished with zero keystrokes (e.g. Escape while reading the prompt).
+        self.startTime = self.endTime
+    end
 
-        -- Check for high score
-        if self.score > self.highscore then
-            self.highscore = self.score
-        end
+    if self.score > self.highscore then
+        self.highscore = self.score
+    end
 
-        -- Call the completion callback if provided
-        if self.onComplete then
-            local stats = self:getStats()
-            self.onComplete(stats)
-        end
+    if self.onComplete then
+        self.onComplete(self:getStats())
     end
 end
 
--- Calculate time taken
 function TypingTrainer:getTimeTaken()
-    if self.finished then
-        return self.endTime - self.startTime
-    else
-        return love.timer.getTime() - self.startTime
-    end
+    if not self.startTime then return 0 end
+    if self.finished then return self.endTime - self.startTime end
+    return love.timer.getTime() - self.startTime
 end
 
--- Calculate typing accuracy
 function TypingTrainer:getAccuracy()
     local total = #self.typed
     if total == 0 then return 0 end
     return (self.correctCount / total) * 100
 end
 
--- Calculate actions per minute (keystrokes)
 function TypingTrainer:getAPM()
     local timeTaken = self:getTimeTaken()
-    if timeTaken < 0.01 then return 0 end  -- Avoid division by zero
-    local keystrokes = #self.typed
-    return (keystrokes / timeTaken) * 60
+    if timeTaken < 0.01 then return 0 end
+    return (#self.typed / timeTaken) * 60
 end
 
--- Get words per minute (based on standard 5 chars per word)
 function TypingTrainer:getWPM()
     local timeTaken = self:getTimeTaken()
-    if timeTaken < 0.01 then return 0 end  -- Avoid division by zero
+    if timeTaken < 0.01 then return 0 end
     return (self.correctCount / 5) / (timeTaken / 60)
 end
 
--- Get complete stats for the session
 function TypingTrainer:getStats()
     return {
         displayName = self.displayName,
@@ -234,176 +369,309 @@ function TypingTrainer:getStats()
         longestStreak = self.longestStreak,
         score = self.score,
         highscore = self.highscore,
-        completed = self.finished
+        completed = self.finished,
     }
 end
 
--- Start a shake animation
+-- Juice: shake -----------------------------------------------------------
+
 function TypingTrainer:startShake(duration, intensity)
-    self.shakingText = true
-    self.shakeTimer = duration or 0.3
-    self.shakeIntensity = intensity or 5
+    self.shake.duration = duration or 0.3
+    self.shake.timer = self.shake.duration
+    self.shake.intensity = intensity or 5
+    self.flashAlpha = FLASH_PEAK
 end
 
--- Update animations and timers
+-- Juice: floating score popups --------------------------------------------
+
+function TypingTrainer:spawnPopup(points, procs)
+    table.insert(self.popups, {
+        text = string.format("+%.0f", points),
+        crit = procs and procs.crit or false,
+        coin = procs and procs.coins and procs.coins > 0 or false,
+        age = 0,
+        life = POPUP_LIFE,
+        dx = love.math and love.math.random and love.math.random(-6, 6) or 0,
+        originX = self.caretDrawX,
+        originY = self.caretDrawY,
+    })
+end
+
+-- Juice: streak meter / particle burst ------------------------------------
+
+function TypingTrainer:checkStreakMilestone()
+    if self.currentStreak > 0
+        and self.currentStreak % STREAK_MILESTONE == 0
+        and self.currentStreak ~= self.lastMilestoneStreak
+    then
+        self.lastMilestoneStreak = self.currentStreak
+        self.pendingBurst = true
+        Audio.playSfx("streak")
+    end
+end
+
+-- decaying_text mutator: characters ahead of the caret fade the longer the
+-- player hesitates. Pure function of idle time + distance so it's testable
+-- without a graphics context.
+function TypingTrainer:getDecayAlpha(distanceAhead)
+    if not self.mutators.decaying_text then return 1 end
+    if distanceAhead < 0 then return 1 end
+    local threshold = DECAY_BASE + distanceAhead * DECAY_STEP
+    local t = self.idleTime - threshold
+    if t <= 0 then return 1 end
+    return math.max(0, 1 - t / DECAY_FADE)
+end
+
+-- Procedurally generate a small radial-falloff dot used as the particle
+-- texture (the Kenney particle pack isn't available). Cached at module scope
+-- since it's identical for every trainer instance.
+local dotImageCache
+local function getDotImage()
+    if dotImageCache then return dotImageCache end
+    local size = 8
+    local imageData = love.image.newImageData(size, size)
+    imageData:mapPixel(function(x, y)
+        local dx, dy = (x + 0.5) - size / 2, (y + 0.5) - size / 2
+        local dist = math.sqrt(dx * dx + dy * dy)
+        local a = math.max(0, 1 - dist / (size / 2))
+        return 1, 1, 1, a
+    end)
+    dotImageCache = love.graphics.newImage(imageData)
+    return dotImageCache
+end
+
+function TypingTrainer:ensureParticleSystem()
+    if self.particleSystem or _G.HEADLESS or not love.graphics then return end
+    local ok, ps = pcall(function()
+        local system = love.graphics.newParticleSystem(getDotImage(), 64)
+        system:setParticleLifetime(0.25, 0.6)
+        system:setSpeed(30, 110)
+        system:setSpread(math.pi * 2)
+        system:setSizes(1.6, 0.2)
+        system:setLinearDamping(1.2)
+        system:setColors(1, 0.79, 0.29, 1, 1, 0.35, 0.29, 0)
+        return system
+    end)
+    if ok then self.particleSystem = ps end
+end
+
+-- Update animations and timers. Kept graphics-free where possible so this is
+-- callable (and useful) from headless tests.
 function TypingTrainer:update(dt)
-    -- Update cursor blink
+    dt = dt or 0
+    self.idleTime = self.idleTime + dt
+
     self.cursorBlinkTimer = self.cursorBlinkTimer + dt
     if self.cursorBlinkTimer >= 0.5 then
         self.cursorBlinkTimer = self.cursorBlinkTimer - 0.5
         self.cursorVisible = not self.cursorVisible
     end
 
-    -- Update shake effect
-    if self.shakingText then
-        self.shakeTimer = self.shakeTimer - dt
-        if self.shakeTimer <= 0 then
-            self.shakingText = false
+    if self.shake.timer > 0 then
+        self.shake.timer = math.max(0, self.shake.timer - dt)
+    end
+    if self.flashAlpha > 0 then
+        self.flashAlpha = math.max(0, self.flashAlpha - dt * FLASH_DECAY)
+    end
+
+    for i = #self.popups, 1, -1 do
+        local p = self.popups[i]
+        p.age = p.age + dt
+        if p.age >= p.life then
+            table.remove(self.popups, i)
         end
     end
 
-    -- Check for time limit
-    if not self.finished and self.timeLimit > 0 then
+    if self.particleSystem then
+        self.particleSystem:update(dt)
+    end
+
+    if self.keyboardView and self.keyboardView.update then
+        pcall(function() self.keyboardView:update(dt) end)
+    end
+
+    if not self.finished and self.timeLimit and self.timeLimit > 0 then
         if self:getTimeTaken() >= self.timeLimit then
             self:finish()
         end
     end
 end
 
--- Draw the typing interface
+-- Draw the typing interface inside the given logical rect.
 function TypingTrainer:draw(x, y, width, height)
-    local style = self.uiStyle
-    x = x or style.padding
-    y = y or style.padding
-    width = width or (love.graphics.getWidth() - style.padding * 2)
-    height = height or (love.graphics.getHeight() - style.padding * 2)
+    if _G.HEADLESS or not love.graphics then return end
 
-    -- Set up fonts
-    love.graphics.setFont(self.titleFont)
+    self:ensureParticleSystem()
 
-    -- Draw title
-    love.graphics.setColor(style.titleColor)
+    love.graphics.push("all")
+
+    local headingFont = Theme.font("heading")
+    local font = Theme.font("mono")
+    local smallFont = Theme.font("small")
+
+    love.graphics.setFont(headingFont)
+    Theme.setColor("text")
     love.graphics.printf(self.displayName, x, y, width, "center")
-    y = y + self.titleFont:getHeight() + style.padding
+    local rowY = y + headingFont:getHeight() + Theme.spacing.sm
 
-    -- Draw prompt
-    love.graphics.setFont(self.textFont)
-    local promptText = "Type the text below:"
-    love.graphics.setColor(style.promptColor)
-    love.graphics.printf(promptText, x, y, width, "left")
-    y = y + self.textFont:getHeight() + style.padding / 2
+    -- Text area box
+    local boxX, boxY, boxW = x, rowY, width
+    local lineHeight = font:getHeight() + Theme.spacing.xs
+    local visibleLines = 3
+    local boxH = lineHeight * visibleLines + Theme.spacing.md * 2
 
-    -- Calculate the text area bounds
-    local textAreaWidth = width
-    local textAreaHeight = self.textFont:getHeight() * 3 -- Adjust for multi-line
+    Theme.setColor("panel")
+    love.graphics.rectangle("fill", boxX, boxY, boxW, boxH, Theme.radius, Theme.radius)
+    if self.flashAlpha > 0 then
+        Theme.setColor("wrong", self.flashAlpha)
+    else
+        Theme.setColor("border")
+    end
+    love.graphics.rectangle("line", boxX, boxY, boxW, boxH, Theme.radius, Theme.radius)
 
-    -- Draw text area background
-    love.graphics.setColor(0.1, 0.1, 0.1, 0.5)
-    love.graphics.rectangle("fill", x, y, textAreaWidth, textAreaHeight, 5, 5)
-    love.graphics.setColor(0.3, 0.3, 0.3, 1)
-    love.graphics.rectangle("line", x, y, textAreaWidth, textAreaHeight, 5, 5)
+    -- Clip so the shake oscillation never visibly leaves the box.
+    love.graphics.setScissor(boxX, boxY, boxW, boxH)
 
-    -- Draw the text content with color highlighting
-    local textX = x + style.padding / 2
-    local textY = y + style.padding / 2
+    local advance = font:getWidth("0")
+    if advance <= 0 then advance = 8 end
+    local innerW = boxW - Theme.spacing.md * 2
+    local charsPerLine = math.max(4, math.floor(innerW / advance))
+    local lines = wrapWords(self.text, charsPerLine)
 
-    -- Apply shake if active
-    if self.shakingText then
-        local shakeX = love.math.random(-self.shakeIntensity, self.shakeIntensity)
-        local shakeY = love.math.random(-self.shakeIntensity, self.shakeIntensity)
-        textX = textX + shakeX
-        textY = textY + shakeY
+    local caretIndex = #self.typed + 1
+    local caretLine, caretCol = 1, 0
+    for li, ln in ipairs(lines) do
+        if caretIndex >= ln.startIndex and caretIndex <= ln.endIndex + 1 then
+            caretLine, caretCol = li, caretIndex - ln.startIndex
+            break
+        end
     end
 
-    -- Draw each character with appropriate color
-    local currentX = textX
-    local lineHeight = self.textFont:getHeight()
-    local lineWidth = 0
-    local maxLineWidth = textAreaWidth - style.padding
+    local shakeX, shakeY = 0, 0
+    if self.shake.timer > 0 then
+        local decay = self.shake.timer / self.shake.duration
+        shakeX = math.sin(self.shake.timer * 40) * self.shake.intensity * decay
+        shakeY = math.cos(self.shake.timer * 33) * self.shake.intensity * 0.5 * decay
+    end
 
-    for i = 1, #self.text do
-        local char = self.text:sub(i, i)
-        local charWidth = self.textFont:getWidth(char)
+    local textOriginX = boxX + Theme.spacing.md + shakeX
+    local textOriginY = boxY + Theme.spacing.md + shakeY
 
-        -- Wrap to next line if needed
-        if lineWidth + charWidth > maxLineWidth then
-            currentX = textX
-            textY = textY + lineHeight
-            lineWidth = 0
-        end
+    love.graphics.setFont(font)
+    for li, ln in ipairs(lines) do
+        local ly = textOriginY + (li - 1) * lineHeight
+        for i = ln.startIndex, ln.endIndex do
+            local col = i - ln.startIndex
+            local cx = textOriginX + col * advance
+            local ch = self.text:sub(i, i)
+            local typedEntry = self.typed[i]
+            local color
 
-        -- Determine character color based on typing progress
-        local color
-        if i <= #self.typed then
-            if self.typed[i].correct then
-                color = style.correctColor
+            if typedEntry then
+                color = Theme.color(typedEntry.correct and "typed" or "wrong")
+            elseif i == caretIndex then
+                color = Theme.color("ghost")
+            elseif self.mutators.decaying_text then
+                local alpha = self:getDecayAlpha(i - caretIndex)
+                if alpha <= 0.02 then ch = "" end
+                color = Theme.color("pending", alpha)
             else
-                color = style.incorrectColor
+                color = Theme.color("pending")
             end
+
+            if ch ~= "" then
+                love.graphics.setColor(color)
+                love.graphics.print(ch, cx, ly)
+            end
+        end
+    end
+
+    love.graphics.setScissor()
+
+    -- Caret eases toward its target instead of snapping.
+    local targetCaretX = textOriginX + caretCol * advance - shakeX
+    local targetCaretY = textOriginY + (caretLine - 1) * lineHeight - shakeY
+    if not self.caretDrawX then
+        self.caretDrawX, self.caretDrawY = targetCaretX, targetCaretY
+    end
+    local frameDt = love.timer.getDelta()
+    local ease = 1 - math.exp(-frameDt * CARET_EASE_SPEED)
+    self.caretDrawX = self.caretDrawX + (targetCaretX - self.caretDrawX) * ease
+    self.caretDrawY = self.caretDrawY + (targetCaretY - self.caretDrawY) * ease
+
+    if not self.finished then
+        Theme.setColor("caret")
+        love.graphics.rectangle("fill", self.caretDrawX, self.caretDrawY, 2, lineHeight - Theme.spacing.xs)
+    end
+
+    -- Floating score popups
+    love.graphics.setFont(smallFont)
+    for _, p in ipairs(self.popups) do
+        local t = p.age / p.life
+        local alpha = 1 - t
+        local px = (p.originX or self.caretDrawX) + (p.dx or 0)
+        local py = (p.originY or self.caretDrawY) - t * POPUP_RISE
+        local scale = p.crit and 1.5 or 1
+        if p.crit then
+            love.graphics.setColor(Theme.color("accent", alpha))
+        elseif p.coin then
+            love.graphics.setColor(Theme.color("warning", alpha))
         else
-            color = style.promptColor
+            love.graphics.setColor(Theme.color("success", alpha))
         end
-
-        -- Draw the character
-        love.graphics.setColor(color)
-        love.graphics.print(char, currentX, textY)
-
-        -- Draw cursor at current position
-        if i == #self.typed + 1 and self.cursorVisible and not self.finished then
-            love.graphics.setColor(style.cursorColor)
-            love.graphics.rectangle("fill", currentX, textY, 2, lineHeight)
-        end
-
-        -- Move to next character position
-        currentX = currentX + charWidth
-        lineWidth = lineWidth + charWidth
+        love.graphics.print(p.text, px, py, 0, scale, scale)
     end
 
-    -- Move below the text area for stats
-    y = y + textAreaHeight + style.padding
+    rowY = boxY + boxH + Theme.spacing.md
 
-    -- Draw stats in a grid layout
-    love.graphics.setFont(self.statsFont)
-    local statsBoxWidth = width / 2 - style.padding / 2
-    local statsBoxHeight = self.statsFont:getHeight() + style.padding
+    -- Streak meter: fills each 10-streak tier, glows brighter the longer the
+    -- run, and pops a particle burst at each milestone.
+    local meterH = 6
+    local streakFrac = (self.currentStreak % STREAK_MILESTONE) / STREAK_MILESTONE
+    if self.currentStreak > 0 and streakFrac == 0 then streakFrac = 1 end
 
-    -- Stats to display (in left/right columns)
-    local stats = {
-        { label = "Time", value = string.format("%.1fs", self:getTimeTaken()) },
-        { label = "Accuracy", value = string.format("%.1f%%", self:getAccuracy()) },
-        { label = "WPM", value = string.format("%.1f", self:getWPM()) },
-        { label = "APM", value = string.format("%.1f", self:getAPM()) },
-        { label = "Errors", value = tostring(self.mistakes) },
-        { label = "Score", value = string.format("%.0f", self.score) }
-    }
+    Theme.setColor("panel")
+    love.graphics.rectangle("fill", x, rowY, width, meterH)
+    local glow = math.min(1, self.currentStreak / (STREAK_MILESTONE * 3))
+    Theme.setColor("accent", 0.55 + glow * 0.45)
+    love.graphics.rectangle("fill", x, rowY, width * streakFrac, meterH)
 
-    -- Draw stats boxes
-    for i, stat in ipairs(stats) do
-        local col = (i - 1) % 2  -- 0 for left column, 1 for right
-        local row = math.floor((i - 1) / 2)
-
-        local boxX = x + col * (statsBoxWidth + style.padding)
-        local boxY = y + row * (statsBoxHeight + style.padding / 2)
-
-        -- Draw box background
-        love.graphics.setColor(style.statsBgColor)
-        love.graphics.rectangle("fill", boxX, boxY, statsBoxWidth, statsBoxHeight, 3, 3)
-
-        -- Draw label and value
-        love.graphics.setColor(style.statsColor)
-        love.graphics.print(stat.label .. ": " .. stat.value, boxX + style.padding / 2, boxY + style.padding / 4)
+    if self.pendingBurst and self.particleSystem then
+        self.particleSystem:setPosition(x + width * streakFrac, rowY)
+        self.particleSystem:emit(24)
+        self.pendingBurst = false
+    end
+    if self.particleSystem then
+        love.graphics.draw(self.particleSystem)
     end
 
-    -- Draw completion message
+    rowY = rowY + meterH + Theme.spacing.sm
+
+    -- Stat line
+    Theme.setColor("textMuted")
+    local statsLine = string.format(
+        "Time %.1fs   Acc %.0f%%   WPM %.0f   APM %.0f   Streak %d   Score %.0f",
+        self:getTimeTaken(), self:getAccuracy(), self:getWPM(), self:getAPM(),
+        self.currentStreak, self.score
+    )
+    love.graphics.printf(statsLine, x, rowY, width, "center")
+    rowY = rowY + smallFont:getHeight() + Theme.spacing.sm
+
+    if self.mutators.timed_burst and self.timeLimit > 0 then
+        local remaining = math.max(0, self.timeLimit - self:getTimeTaken())
+        Theme.setColor(remaining <= 5 and "wrong" or "warning")
+        love.graphics.printf(string.format("%.1fs", remaining), x, rowY, width, "center")
+    end
+
     if self.finished then
-        y = y + 3 * (statsBoxHeight + style.padding / 2) + style.padding
-
-        love.graphics.setColor(1, 1, 0, 1)
-        love.graphics.printf("Press Enter to continue", x, y, width, "center")
+        Theme.setColor("accent")
+        love.graphics.printf("Press Enter to continue", x, y + height - headingFont:getHeight(), width, "center")
     end
 
-    -- Reset color
-    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.pop()
 end
+
+-- Exposed for testing: pure text-flow logic, no font/graphics dependency.
+TypingTrainer.wrapWords = wrapWords
 
 return TypingTrainer
