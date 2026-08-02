@@ -12,6 +12,41 @@ local SPRITE_HEIGHT = 16
 local SHEET_COLUMNS = 8
 local SHEET_ROWS = 14
 
+-- Character -> sprite key. Pure data, built once at require time (no
+-- love.graphics involved), so it can be inspected headless without loading
+-- the actual sprite sheet -- see tests/test_keycaps.lua.
+local CHAR_TO_SPRITE_KEY = {
+    -- Letters
+    ["a"] = "A_Key", ["b"] = "B_Key", ["c"] = "C_Key", ["d"] = "D_Key",
+    ["e"] = "E_Key", ["f"] = "F_Key", ["g"] = "G_Key", ["h"] = "H_Key",
+    ["i"] = "I_Key", ["j"] = "J_Key", ["k"] = "K_Key", ["l"] = "L_Key",
+    ["m"] = "M_Key", ["n"] = "N_Key", ["o"] = "O_Key", ["p"] = "P_Key",
+    ["q"] = "Q_Key", ["r"] = "R_Key", ["s"] = "S_Key", ["t"] = "T_Key",
+    ["u"] = "U_Key", ["v"] = "V_Key", ["w"] = "W_Key", ["x"] = "X_Key",
+    ["y"] = "Y_Key", ["z"] = "Z_Key",
+
+    -- Special characters
+    ["."] = "PERIOD_Key",
+    [","] = "COMMA_Key",
+    ["?"] = "QUESTION_MARK_Key",
+    ["!"] = "EXCLAMATION_Key",
+    ["/"] = "FORWARD_SLASH_Key",
+    ["\\"] = "BACK_SLASH_Key",
+    [";"] = "SEMI_COLON_Key",
+    ["'"] = "APOSTROPHE_Key",
+    ["]"] = "RIGHT_BRACKET_Key",
+    ["["] = "LEFT_BRACKET_Key",
+    ["="] = "EQUALS_PLUS_Key",
+    ["+"] = "EQUALS_PLUS_Key",
+    ["-"] = "MINUS_Key",
+    ["~"] = "TILDA_Key",
+    [" "] = "SPACE_Key",
+}
+
+-- Exposed for headless tests; instances also copy this onto self.charToSpriteKey
+-- during load() for backward-compatible instance access.
+KeySpriteMapper.CHAR_TO_SPRITE_KEY = CHAR_TO_SPRITE_KEY
+
 -- Create a new key sprite mapper instance
 function KeySpriteMapper.new()
     local self = setmetatable({}, KeySpriteMapper)
@@ -163,55 +198,18 @@ function KeySpriteMapper:load()
 
         -- For space bar and other special keys, we can add them here or use default rendering
         SPACE_Key = createQuad(7, 7),
-        SPACE_Key_DARK = createQuad(7, 14)
+        SPACE_Key_DARK = createQuad(7, 14),
+
+        -- "!" appears in every layout's punctuation row but previously had no
+        -- sprite at all. (8, 7) / (8, 14) are the one unused cell in the
+        -- light/dark rows that already hold the other odd punctuation.
+        EXCLAMATION_Key = createQuad(8, 7),
+        EXCLAMATION_Key_DARK = createQuad(8, 14)
     }
 
-    -- Create translation table from character to sprite key
-    self.charToSpriteKey = {
-        -- Letters
-        ["a"] = "A_Key",
-        ["b"] = "B_Key",
-        ["c"] = "C_Key",
-        ["d"] = "D_Key",
-        ["e"] = "E_Key",
-        ["f"] = "F_Key",
-        ["g"] = "G_Key",
-        ["h"] = "H_Key",
-        ["i"] = "I_Key",
-        ["j"] = "J_Key",
-        ["k"] = "K_Key",
-        ["l"] = "L_Key",
-        ["m"] = "M_Key",
-        ["n"] = "N_Key",
-        ["o"] = "O_Key",
-        ["p"] = "P_Key",
-        ["q"] = "Q_Key",
-        ["r"] = "R_Key",
-        ["s"] = "S_Key",
-        ["t"] = "T_Key",
-        ["u"] = "U_Key",
-        ["v"] = "V_Key",
-        ["w"] = "W_Key",
-        ["x"] = "X_Key",
-        ["y"] = "Y_Key",
-        ["z"] = "Z_Key",
-
-        -- Special characters
-        ["."] = "PERIOD_Key",
-        [","] = "COMMA_Key",
-        ["?"] = "QUESTION_MARK_Key",
-        ["/"] = "FORWARD_SLASH_Key",
-        ["\\"] = "BACK_SLASH_Key",
-        [";"] = "SEMI_COLON_Key",
-        ["'"] = "APOSTROPHE_Key",
-        ["]"] = "RIGHT_BRACKET_Key",
-        ["["] = "LEFT_BRACKET_Key",
-        ["="] = "EQUALS_PLUS_Key",
-        ["+"] = "EQUALS_PLUS_Key",
-        ["-"] = "MINUS_Key",
-        ["~"] = "TILDA_Key",
-        [" "] = "SPACE_Key"
-    }
+    -- Instance copy for backward compatibility; CHAR_TO_SPRITE_KEY above is
+    -- the source of truth and is usable without an instance/loaded sheet.
+    self.charToSpriteKey = CHAR_TO_SPRITE_KEY
 
     self.loaded = true
     print("KeySpriteMapper: Loaded keyboard sprite mappings")
@@ -255,11 +253,9 @@ function KeySpriteMapper:drawKey(char, x, y, width, height, isDark)
         return false
     end
 
-    -- Handle special case for space
-    if char == " " then
-        char = "space"
-    end
-
+    -- No rewrite needed: CHAR_TO_SPRITE_KEY already maps " " -> "SPACE_Key".
+    -- (This used to rewrite char to the string "space", which is not a key in
+    -- that table, so the spacebar silently never rendered as a sprite.)
     local quad = self:getQuadForChar(char, isDark)
     if not quad then
         return false
