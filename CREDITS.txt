@@ -1,0 +1,73 @@
+RogueKeys - Credits and Attributions
+====================================
+
+This file is the source of truth for third-party attribution. It is rendered
+in-game on the credits screen. Every asset added to the project must be listed
+here with its license before it ships.
+
+
+ENGINE
+------
+LOVE (love2d.org)                       zlib License
+
+
+CODE / LIBRARIES
+----------------
+serpent 0.303                           MIT License
+  Lua serializer and pretty printer
+  (C) 2012-2018 Paul Kulchenko
+  https://github.com/pkulchenko/serpent
+
+
+FONTS
+-----
+(none shipped yet - the LOVE default font is used as a placeholder)
+
+Planned:
+  monogram          by datagoblin        CC0
+                    https://datagoblin.itch.io/monogram
+  m6x11             by Daniel Linssen    Free with attribution
+                    https://managore.itch.io/m6x11
+
+
+ART
+---
+(placeholder art is generated procedurally at runtime)
+
+Planned:
+  Pixel Keyboard Buttons   by Caz            CC BY 4.0
+                           https://cazwolf.itch.io/caz-pixel-keyboard
+  Pixel Art GUI Elements   by Mounir Tohami  CC0
+                           https://mounirtohami.itch.io/pixel-art-gui-elements
+  UI Pack: Pixel Adventure by Kenney         CC0
+                           https://kenney.nl/assets/ui-pack-pixel-adventure
+  Free RPG Icon Pack       by Kyrise         CC BY 4.0
+                           https://kyrise.itch.io/kyrises-free-16x16-rpg-icon-pack
+  Fantasy Icons Pack       by Shikashi       CC BY 4.0
+                           https://shikashipx.itch.io/shikashis-fantasy-icons-pack
+
+
+AUDIO
+-----
+(placeholder tones are synthesized procedurally at runtime)
+
+Planned:
+  Interface Sounds / UI Audio / Music Jingles  by Kenney       CC0
+                                               https://kenney.nl
+  Three Red Hearts - Prepare to Dev            by Abstraction  CC0
+                                               https://tallbeard.itch.io/three-red-hearts-prepare-to-dev
+
+
+WORD LIST
+---------
+data/words.txt - ENABLE-style English word list, public domain
+
+
+ATTRIBUTION REQUIRED AT LAUNCH
+------------------------------
+The following licenses require visible credit. Do not ship without them:
+  - Caz (CC BY 4.0)
+  - Kyrise (CC BY 4.0)
+  - Shikashi / Matt Firth (CC BY 4.0)
+  - Daniel Linssen, m6x11 (free with attribution)
+  - Any CC BY audio clips

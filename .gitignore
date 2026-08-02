@@ -1,2 +1,17 @@
 .idea
 .vscode
+
+# Build output
+dist/
+*.love
+
+# Portable LOVE runtime fetched by tools/get-love.ps1
+tools/.love/
+
+# Throwaway verification harnesses
+.verify/
+
+# Local save/config copies, if ever run with a source-dir identity
+save/
+config/
+screenshots/

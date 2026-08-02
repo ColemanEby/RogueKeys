@@ -1,366 +1,345 @@
 -- main.lua
--- Refactored entry point for the typing trainer roguelike with improved file system handling
+-- Entry point. Window and save identity are configured in conf.lua; this file
+-- boots subsystems, owns the LOVE callbacks, and delegates everything else to
+-- the StateManager.
 
--- Import engine modules
 local StateManager = require("engine/stateManager")
 local ResourceManager = require("engine/resourceManager")
 local ConfigManager = require("engine/configManager")
 
--- Import startup utilities
+local Screen = require("modules/ui/screen")
+local Theme = require("modules/ui/theme")
+local Audio = require("modules/audio/audio")
+
 local TextGenerator = require("modules/typing/textGenerator")
 local FileManager = require("modules/util/fileManager")
 
--- Add the DEBUG_MODE as a global variable so it can be accessed everywhere
+-- Single source of truth for debug mode. Toggle in-game with F5.
 _G.DEBUG_MODE = false
 
--- Global settings
-local GAME_TITLE = "Typing Trainer Roguelike"
-local DEFAULT_WIDTH = 800
-local DEFAULT_HEIGHT = 600
-local GAME_IDENTITY = "RogueKeys"
+local debugTimer = 0
 
--- Debugging flag
-local DEBUG_MODE = true
+-- Screenshot mode: `love . --shot <stateName> [outputName]` boots normally,
+-- switches to the named state, captures one frame to
+-- <saveDir>/screenshots/<name>.png and quits. This is how a change to a state
+-- is verified visually without a human at the keyboard.
+local shotState, shotName = nil, nil
+local shotFrame = 0
 
--- Error handler for better debugging
-function love.errorhandler(msg)
-    print("ERROR: " .. tostring(msg))
-    print(debug.traceback())
-
-    -- Display error on screen
-    if love.graphics and love.graphics.isActive() then
-        love.graphics.reset()
-        love.graphics.setColor(0.3, 0.1, 0.1, 1)
-        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.printf("ERROR: " .. tostring(msg), 50, 50, love.graphics.getWidth() - 100)
-        love.graphics.printf(debug.traceback(), 50, 120, love.graphics.getWidth() - 100)
-        love.graphics.present()
-    end
-
-    return msg
-end
-
-function love.load()
-    -- Set a consistent identity for save files
-    love.filesystem.setIdentity(GAME_IDENTITY, true)
-    
-    -- Initialize essential directories
-    local directoriesToCreate = {
-        "config",
-        "save",
-        "data",
-        "resources/sprites",
-        "resources/fonts", 
-        "resources/sounds"
-    }
-    
-    print("[Ensuring critical directories exist...]")
-    for _, dir in ipairs(directoriesToCreate) do
-        local success = love.filesystem.createDirectory(dir)
-        print("Creating directory " .. dir .. ": " .. (success and "Success" or "Failed"))
-    end
-    
-    -- Test file writing capability
-    local testFile = "save/test_write.tmp"
-    local success = love.filesystem.write(testFile, "Test write capability")
-    print("Testing file write capability: " .. (success and "Success" or "Failed"))
-    if success then
-        love.filesystem.remove(testFile)
-    else
-        print("WARNING: File writing appears to be disabled. Check permissions!")
-    end
-    
-    -- Initialize basic rendering
-    love.graphics.setBackgroundColor(0.1, 0.1, 0.2)
-    love.graphics.setFont(love.graphics.newFont(14))
-
-    -- Apply window configuration
-    love.window.setMode(DEFAULT_WIDTH, DEFAULT_HEIGHT, {
-        fullscreen = false,
-        vsync = true,
-        minwidth = 800,
-        minheight = 600,
-        resizable = true
-    })
-    love.window.setTitle(GAME_TITLE)
-
-    -- Disable key repeat to prevent multiple keypresses
-    love.keyboard.setKeyRepeat(false)
-
-    -- Initialize file management system
-    print("[Setting up file management system...]")
-    local success, err = pcall(function()
-        FileManager.init()
-        
-        -- Print debug info about file system
-        FileManager.printFileSystemInfo()
-    end)
-
-    if not success then
-        print("ERROR initializing file management: " .. tostring(err))
-        -- Create a fallback implementation to prevent further errors
-        _G.FileSystemDisabled = true
-        print("Using fallback in-memory file system")
-    end
-
-    -- Start with a loading message
-    print("=== Starting Typing Trainer Roguelike ===")
-
-    -- Try loading modules in a safe way
-    print("[Loading engine modules...]")
-
-    -- Initialize ConfigManager
-    print("[Initializing ConfigManager...]")
-    success, err = pcall(function() ConfigManager:init() end)
-    if not success then
-        print("ERROR initializing ConfigManager: " .. tostring(err))
-        print("Using default configurations")
-    end
-
-    -- Initialize ResourceManager
-    print("[Initializing ResourceManager...]")
-    success, err = pcall(function() ResourceManager:init() end)
-    if not success then
-        print("ERROR initializing ResourceManager: " .. tostring(err))
-    end
-
-    -- Check if the keyboard sprite sheet was loaded
-    local keyboardSprite = ResourceManager:getSprite("keyboard_sprites")
-    if keyboardSprite then
-        print("Keyboard sprite sheet loaded successfully")
-    else
-        print("Warning - Keyboard sprite sheet not found, will use fallback rendering")
-    end
-
-    -- Preload text data
-    print("[Preloading text data...]")
-    success, err = pcall(function() TextGenerator:preload() end)
-    if not success then
-        print("ERROR preloading text: " .. tostring(err))
-    end
-
-    -- Initialize stat tracking integration
-    print("[Initializing stat tracking system...]")
-    success, err = pcall(function()
-        local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-        StatTrackingIntegration.init()
-        
-        -- Verify system integrity if in debug mode
-        if _G.DEBUG_MODE then
-            print("Running stat tracking verification...")
-            StatTrackingIntegration.verifySystem()
+local function parseShotArgs()
+    if type(arg) ~= "table" then return end
+    for i, a in ipairs(arg) do
+        if a == "--shot" then
+            shotState = arg[i + 1]
+            shotName = arg[i + 2]
+            if shotName and shotName:sub(1, 2) == "--" then shotName = nil end
         end
-    end)
-
-    if not success then
-        print("ERROR initializing stat tracking: " .. tostring(err))
     end
-
-    -- Ensure the StateManager has the fallback state
-    print("[Initializing States...]")
-    StateManager.stateCache = StateManager.stateCache or {}
-
-    -- Load the fallback menu state directly
-    local fallbackMenu = require("states/fallbackMenuState")
-    StateManager.stateCache["fallbackMenuState"] = fallbackMenu
-
-    -- Try loading the regular menu state
-    local menuState = nil
-    success, menuState = pcall(require, "states/menuState")
-    if success and menuState then
-        print("Successfully loaded menuState")
-        StateManager.stateCache["menuState"] = menuState
-    else
-        print("Failed to load menuState, will use fallback")
+    if shotState then
+        shotName = shotName or shotState
     end
-
-    -- Switch to fallback menu initially to ensure something displays
-    print("[Switching to initial state...]")
-    if StateManager.stateCache["menuState"] then
-        StateManager.switch(StateManager.stateCache["menuState"])
-    else
-        StateManager.switch(fallbackMenu)
-    end
-
-    print("Initialization complete")
 end
 
-function love.update(dt)
-    -- Check if StateManager has a current state
-    if not StateManager.current then
-        print("WARNING: No current state in StateManager")
+-- A state opts into the 640x360 logical canvas by setting `logical = true` on
+-- its module table. Un-migrated states keep drawing at window resolution.
+local function usesLogicalCanvas()
+    return Screen.isReady()
+        and StateManager.current ~= nil
+        and StateManager.current.logical == true
+end
+
+function love.errorhandler(msg)
+    msg = tostring(msg)
+    local trace = debug.traceback()
+
+    print("ERROR: " .. msg)
+    print(trace)
+
+    if not love.window or not love.graphics or not love.graphics.isActive() then
         return
     end
 
-    -- Update the current state
-    local success, err = pcall(function() StateManager.update(dt) end)
-    if not success then
-        print("ERROR in update: " .. tostring(err))
+    love.graphics.reset()
+    love.graphics.setCanvas()
+
+    return function()
+        love.event.pump()
+        for e, a in love.event.poll() do
+            if e == "quit" then return 1 end
+            if e == "keypressed" and a == "escape" then return 1 end
+        end
+
+        love.graphics.clear(0.3, 0.1, 0.1)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.printf("ERROR: " .. msg, 50, 50, love.graphics.getWidth() - 100)
+        love.graphics.printf(trace, 50, 120, love.graphics.getWidth() - 100)
+        love.graphics.printf("Press Escape to quit.", 50, love.graphics.getHeight() - 60,
+            love.graphics.getWidth() - 100)
+        love.graphics.present()
+
+        if love.timer then love.timer.sleep(0.05) end
+    end
+end
+
+-- Headless test run: boot only what pure-logic tests need, then quit with the
+-- failure count as the exit code.
+local function runTests()
+    print("[Headless test run]")
+
+    local ok, err = pcall(function()
+        FileManager.init()
+        ConfigManager:init()
+    end)
+    if not ok then
+        print("WARNING: test bootstrap failed: " .. tostring(err))
     end
 
-    -- Debug info
-    if DEBUG_MODE then
-        if not debugTimer then debugTimer = 0 end
+    local Runner = require("tests/run")
+    local failed = Runner.run()
+
+    love.event.quit(failed > 0 and 1 or 0)
+end
+
+function love.load()
+    if _G.HEADLESS then
+        runTests()
+        return
+    end
+
+    -- Save directories. conf.lua has already set the identity, so these land in
+    -- the right place.
+    for _, dir in ipairs({ "config", "save", "screenshots" }) do
+        love.filesystem.createDirectory(dir)
+    end
+
+    Screen.init()
+
+    local ok, err = pcall(function()
+        FileManager.init()
+        if _G.DEBUG_MODE then FileManager.printFileSystemInfo() end
+    end)
+    if not ok then
+        print("ERROR initializing file management: " .. tostring(err))
+        _G.FileSystemDisabled = true
+    end
+
+    ok, err = pcall(function() ConfigManager:init() end)
+    if not ok then print("ERROR initializing ConfigManager: " .. tostring(err)) end
+
+    ok, err = pcall(function() ResourceManager:init() end)
+    if not ok then print("ERROR initializing ResourceManager: " .. tostring(err)) end
+
+    ok, err = pcall(function() Audio.init() end)
+    if not ok then print("ERROR initializing Audio: " .. tostring(err)) end
+
+    ok, err = pcall(function() TextGenerator:preload() end)
+    if not ok then print("ERROR preloading text: " .. tostring(err)) end
+
+    love.graphics.setFont(Theme.font("body"))
+    love.keyboard.setKeyRepeat(false)
+
+    -- Shop offers were identical on every launch without this.
+    math.randomseed(os.time())
+    if love.math then love.math.setRandomSeed(os.time()) end
+
+    StateManager.stateCache = StateManager.stateCache or {}
+    StateManager.stateCache["fallbackMenuState"] =
+        StateManager.createState(require("states/fallbackMenuState"))
+
+    local loaded, menuState = pcall(require, "states/menuState")
+    if loaded and menuState then
+        StateManager.stateCache["menuState"] = StateManager.createState(menuState)
+        StateManager.switch("menuState")
+    else
+        print("Failed to load menuState, using fallback: " .. tostring(menuState))
+        StateManager.switch("fallbackMenuState")
+    end
+
+    parseShotArgs()
+    if shotState then
+        print("[Screenshot mode] target state: " .. shotState)
+        local ok, err = pcall(StateManager.switch, shotState)
+        if not ok then
+            print("SHOT ERROR: could not switch to '" .. shotState .. "': " .. tostring(err))
+            love.event.quit(1)
+        end
+    end
+end
+
+-- Drive the screenshot capture. Called at the end of love.draw so the frame is
+-- fully composited (including Screen.pop) before it is captured.
+local function updateShotMode()
+    if not shotState then return end
+
+    shotFrame = shotFrame + 1
+
+    -- Capture around the 1s mark so entry animations (fades, counters) have
+    -- settled; several states ramp alpha from 0 over the first ~0.7s.
+    if shotFrame == 60 then
+        love.graphics.captureScreenshot(function(imageData)
+            local path = "screenshots/" .. shotName .. ".png"
+            local ok, err = pcall(function()
+                love.filesystem.write(path, imageData:encode("png"))
+            end)
+            if ok then
+                print("SHOT OK: " .. love.filesystem.getSaveDirectory() .. "/" .. path)
+            else
+                print("SHOT ERROR: failed to write " .. path .. ": " .. tostring(err))
+            end
+        end)
+    elseif shotFrame >= 75 then
+        love.event.quit(0)
+    end
+end
+
+function love.update(dt)
+    if _G.HEADLESS then return end
+
+    local ok, err = pcall(StateManager.update, dt)
+    if not ok then print("ERROR in update: " .. tostring(err)) end
+
+    Audio.update(dt)
+
+    if _G.DEBUG_MODE then
         debugTimer = debugTimer + dt
         if debugTimer > 5 then
             debugTimer = 0
-            print("Current state: " .. (StateManager.current and StateManager.current.name or "nil"))
-            print("FPS: " .. love.timer.getFPS())
+            print(string.format("state=%s fps=%d mem=%.2fMB",
+                StateManager.current and StateManager.current.name or "nil",
+                love.timer.getFPS(),
+                collectgarbage("count") / 1024))
         end
     end
 end
 
 function love.draw()
-    -- Clear the screen
-    love.graphics.clear(0.1, 0.1, 0.2)
+    if _G.HEADLESS then return end
 
-    -- Check if StateManager has a current state
-    if not StateManager.current then
-        -- Draw a loading message if no state is active
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.printf("Loading...", 0, 300, love.graphics.getWidth(), "center")
-        return
+    local logical = usesLogicalCanvas()
+
+    if logical then
+        Screen.push(Theme.color("base"))
+    else
+        love.graphics.clear(Theme.color("base"))
     end
 
-    -- Draw the current state
-    local success, err = pcall(function() StateManager.draw() end)
-    if not success then
-        -- Draw error message
-        love.graphics.clear(0.3, 0.1, 0.1)
+    if StateManager.current then
+        local ok, err = pcall(StateManager.draw)
+        if not ok then
+            love.graphics.clear(0.3, 0.1, 0.1)
+            love.graphics.setColor(1, 1, 1)
+            love.graphics.printf("ERROR: " .. tostring(err), 50, 50,
+                (logical and Screen.getWidth() or love.graphics.getWidth()) - 100)
+        end
+    else
         love.graphics.setColor(1, 1, 1)
-        love.graphics.printf("ERROR: " .. tostring(err), 50, 50, love.graphics.getWidth() - 100)
+        love.graphics.printf("Loading...", 0, 160,
+            logical and Screen.getWidth() or love.graphics.getWidth(), "center")
     end
 
-    -- Draw debug info if in debug mode
-    if DEBUG_MODE then
+    if logical then
+        Screen.pop()
+    end
+
+    if _G.DEBUG_MODE then
         love.graphics.setColor(1, 1, 1, 0.7)
-        love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 10)
-        love.graphics.print("State: " .. (StateManager.current and StateManager.current.name or "nil"), 10, 30)
-        love.graphics.print("Memory: " .. string.format("%.2f MB", collectgarbage("count") / 1024), 10, 50)
-        
-        -- Add file system status
+        love.graphics.setFont(Theme.font("small"))
+        love.graphics.print("FPS: " .. love.timer.getFPS(), 4, 4)
+        love.graphics.print("State: " ..
+            (StateManager.current and StateManager.current.name or "nil"), 4, 16)
+        love.graphics.print(string.format("Mem: %.2f MB", collectgarbage("count") / 1024), 4, 28)
         if _G.FileSystemDisabled then
             love.graphics.setColor(1, 0.5, 0.5, 0.7)
-            love.graphics.print("FILE SYSTEM: DISABLED (using memory only)", 10, 70)
+            love.graphics.print("FILE SYSTEM: DISABLED", 4, 40)
         end
+        love.graphics.setColor(1, 1, 1, 1)
     end
+
+    updateShotMode()
 end
 
 function love.keypressed(key, scancode, isrepeat)
-    -- Debug key combos
-    if DEBUG_MODE then
-        if key == "f1" then
-            print("--- DEBUG INFO ---")
-            print("FPS: " .. love.timer.getFPS())
-            print("Current state: " .. (StateManager.current and StateManager.current.name or "nil"))
-            print("Memory usage: " .. collectgarbage("count") .. " KB")
-            return
-        elseif key == "f2" then
-            print("--- STATS DEBUG INFO ---")
-            local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-            local debugInfo = StatTrackingIntegration.getDebugInfo()
-            
-            for k, v in pairs(debugInfo) do
-                print(k .. ": " .. tostring(v))
-            end
-            
-            -- Verify saved stats
-            local StatVerifier = require("modules/util/statVerifier")
-            StatVerifier.verifySavedStats()
-            
-            return
-        elseif key == "f3" then
-            -- Reset stats (for testing)
-            print("--- RESETTING STATS ---")
-            local StatTrackingIntegration = require("modules/util/statTrackingIntegration")
-            local success = StatTrackingIntegration.resetStats()
-            print("Stats reset: " .. (success and "Success" or "Failed"))
-            return
-        elseif key == "f4" then
-            -- Test file system
-            print("--- TESTING FILE SYSTEM ---")
-            local testPath = "save/file_test.tmp"
-            local success = love.filesystem.write(testPath, "File system test")
-            print("Writing test file: " .. (success and "Success" or "Failed"))
-            
-            if success then
-                local content = love.filesystem.read(testPath)
-                print("Reading test file: " .. (content and "Success" or "Failed"))
-                love.filesystem.remove(testPath)
-            end
-            return
-        end
+    if key == "f5" then
+        _G.DEBUG_MODE = not _G.DEBUG_MODE
+        print("DEBUG_MODE = " .. tostring(_G.DEBUG_MODE))
+        return
     end
 
-    -- Force quit (for development)
-    if key == "escape" and love.keyboard.isDown("lctrl") then
+    if key == "f11" then
+        local full = love.window.getFullscreen()
+        love.window.setFullscreen(not full, "desktop")
+        Screen.resize(love.graphics.getDimensions())
+        return
+    end
+
+    if key == "escape" and (love.keyboard.isDown("lctrl") or love.keyboard.isDown("rctrl")) then
         love.event.quit()
         return
     end
 
-    -- Forward to state manager
-    if StateManager.current then
-        local success, err = pcall(function() StateManager.keypressed(key) end)
-        if not success then
-            print("ERROR in keypressed: " .. tostring(err))
-        end
-    end
+    local ok, err = pcall(StateManager.keypressed, key, scancode, isrepeat)
+    if not ok then print("ERROR in keypressed: " .. tostring(err)) end
+end
+
+function love.keyreleased(key, scancode)
+    local ok, err = pcall(StateManager.keyreleased, key, scancode)
+    if not ok then print("ERROR in keyreleased: " .. tostring(err)) end
 end
 
 function love.textinput(text)
-    if StateManager.current then
-        local success, err = pcall(function() StateManager.textinput(text) end)
-        if not success then
-            print("ERROR in textinput: " .. tostring(err))
-        end
+    local ok, err = pcall(StateManager.textinput, text)
+    if not ok then print("ERROR in textinput: " .. tostring(err)) end
+end
+
+-- Mouse coordinates are translated into logical space for migrated states.
+local function mouseCoords(x, y)
+    if usesLogicalCanvas() then
+        return Screen.toGame(x, y)
     end
+    return x, y
 end
 
 function love.mousepressed(x, y, button, istouch, presses)
-    if StateManager.current and StateManager.current.mousepressed then
-        local success, err = pcall(function()
-            StateManager.current.mousepressed(x, y, button, istouch, presses)
-        end)
-        if not success then
-            print("ERROR in mousepressed: " .. tostring(err))
-        end
-    end
+    local state = StateManager.current
+    if not state or not state.mousepressed then return end
+
+    local gx, gy = mouseCoords(x, y)
+    local ok, err = pcall(state.mousepressed, gx, gy, button, istouch, presses)
+    if not ok then print("ERROR in mousepressed: " .. tostring(err)) end
 end
 
 function love.mousereleased(x, y, button, istouch, presses)
-    if StateManager.current and StateManager.current.mousereleased then
-        local success, err = pcall(function()
-            StateManager.current.mousereleased(x, y, button, istouch, presses)
-        end)
-        if not success then
-            print("ERROR in mousereleased: " .. tostring(err))
-        end
+    local state = StateManager.current
+    if not state or not state.mousereleased then return end
+
+    local gx, gy = mouseCoords(x, y)
+    local ok, err = pcall(state.mousereleased, gx, gy, button, istouch, presses)
+    if not ok then print("ERROR in mousereleased: " .. tostring(err)) end
+end
+
+function love.mousemoved(x, y, dx, dy, istouch)
+    local state = StateManager.current
+    if not state or not state.mousemoved then return end
+
+    local gx, gy = mouseCoords(x, y)
+    local scale = Screen.getScale()
+    if usesLogicalCanvas() and scale > 0 then
+        dx, dy = dx / scale, dy / scale
     end
+
+    local ok, err = pcall(state.mousemoved, gx, gy, dx, dy, istouch)
+    if not ok then print("ERROR in mousemoved: " .. tostring(err)) end
 end
 
 function love.resize(w, h)
-    if StateManager.current and StateManager.current.resize then
-        local success, err = pcall(function() StateManager.current.resize(w, h) end)
-        if not success then
-            print("ERROR in resize: " .. tostring(err))
-        end
-    end
+    Screen.resize(w, h)
+
+    local ok, err = pcall(StateManager.resize, w, h)
+    if not ok then print("ERROR in resize: " .. tostring(err)) end
 end
 
 function love.quit()
-    -- Final file system diagnostic check before quitting
-    if not _G.FileSystemDisabled and FileManager then
-        print("Performing final file system check...")
-        FileManager.printFileSystemInfo()
-    end
-    
-    -- Save configuration before quitting
-    local success, err = pcall(function() ConfigManager:saveAllConfigs() end)
-    if not success then
-        print("ERROR saving configs: " .. tostring(err))
-    end
-    
+    local ok, err = pcall(function() ConfigManager:saveAllConfigs() end)
+    if not ok then print("ERROR saving configs: " .. tostring(err)) end
     return false
 end
-
