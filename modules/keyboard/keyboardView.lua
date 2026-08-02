@@ -1,11 +1,38 @@
 -- modules/keyboard/keyboardView.lua
--- Visual representation of keyboard with key sprites and animations
+-- Visual representation of the keyboard: lays out the current KeyboardModel's
+-- layout and hands each key off to CapRenderer for the actual layered art
+-- (switch housing -> keycap body -> legend -> effect overlay).
+--
+-- Coordinates: draw(x, y, scale) / getKeyAtPosition(x, y, baseX, baseY, scale)
+-- treat x/y as whole pixels in whatever coordinate space the caller draws in
+-- (the 640x360 logical canvas once the calling state opts in via
+-- `logical = true`, window pixels otherwise -- see modules/ui/screen.lua).
+-- Everything here is snapped to whole pixels and the keycap art is always
+-- drawn at an integer multiple of its native 32px size; pixel art must never
+-- be scaled by a fractional factor or it blurs.
+--
+-- Animation API -- nothing calls these yet; unit 15's typing trainer wires
+-- them up to real key events:
+--   view:activateKey(key)              key is held down right now
+--   view:deactivateKey(key)            key was released
+--   view:animateKeyPress(key, result)  momentary "was pressed" pulse.
+--                                       result = nil | "correct" | "error":
+--                                       always adds the 2px depress, and for
+--                                       "correct"/"error" also a brief
+--                                       colored glow ring.
+--   view:setPreviewItem(item)          item = {key=, rarity=, capVariant=,
+--                                       switchType=} or nil. Shows what that
+--                                       key would look like with `item`
+--                                       installed, e.g. while hovering a shop
+--                                       offer, without touching the model.
 
-local ResourceManager = require("engine/resourceManager")
-local KeySpriteMapper = require("modules/keyboard/keySpriteMapper")
+local Theme = require("modules/ui/theme")
+local CapRenderer = require("modules/keyboard/capRenderer")
 
 local KeyboardView = {}
 KeyboardView.__index = KeyboardView
+
+local CAP_SIZE = CapRenderer.CAP_SIZE
 
 -- Create a new keyboard view for the given keyboard model
 function KeyboardView.new(keyboardModel)
@@ -14,285 +41,257 @@ function KeyboardView.new(keyboardModel)
     self.keyboardModel = keyboardModel
     self.layout = keyboardModel.layout
 
-    -- Styling options with defaults
-    self.style = {
-        keyWidth = 50,
-        keyHeight = 50,
-        keySpacing = 5,
-        keyCornerRadius = 5,
-        keyColor = {0.2, 0.2, 0.2, 1.0},
-        keyTextColor = {1.0, 1.0, 1.0, 1.0},
-        keyUpgradedColor = {0.3, 0.6, 0.3, 1.0},
-        keyHighlightColor = {0.8, 0.8, 0.0, 1.0},
-        keyStrokeColor = {0.3, 0.3, 0.3, 1.0},
-        keyShadowColor = {0.0, 0.0, 0.0, 0.3},
-        keyShadowOffset = 2,
-        fontName = "default",
-        fontSize = 18,
-        upgradeIndicatorColor = {1.0, 0.8, 0.0, 1.0}
-    }
-
-    -- Active keys for highlighting during typing
-    self.activeKeys = {}
-    self.animations = {}
-
-    -- Initialize key sprite mapper
-    self.spriteMapper = KeySpriteMapper.new()
-    self.useSprites = self.spriteMapper:load()
+    self.activeKeys = {}   -- key -> true while physically held down
+    self.animations = {}   -- {key=, type="press"|"correct"|"error", progress=, duration=}
+    self.previewItem = nil -- {key=, rarity=, capVariant=, switchType=} or nil
 
     return self
 end
 
--- Calculate keyboard dimensions
+-- Cross-unit note: modules/items/ (unit 13) may not exist in every worktree
+-- yet. If the model exposes a per-key item, trust its rarity/capVariant/
+-- switchType directly; otherwise fall back to the legacy upgrades-map float
+-- and infer a rarity tier from its magnitude so an upgraded key still looks
+-- distinct on old saves instead of rendering as a plain common cap.
+local function bonusToRarity(bonus)
+    if bonus >= 0.28 then return "legendary" end
+    if bonus >= 0.20 then return "epic" end
+    if bonus >= 0.12 then return "rare" end
+    if bonus >= 0.05 then return "uncommon" end
+    return "common"
+end
+
+function KeyboardView:resolveKeySpec(keyValue)
+    local model = self.keyboardModel
+    local isUpgraded = model:isKeyUpgraded(keyValue)
+    local bonus = model:getKeyBonus(keyValue)
+
+    local rarity, capVariant, switchType = "common", "plain", "linear"
+
+    local item = nil
+    if model.getKeyItem then
+        local ok, result = pcall(model.getKeyItem, model, keyValue)
+        if ok then item = result end
+    end
+
+    if item then
+        rarity = item.rarity or rarity
+        capVariant = item.capVariant or capVariant
+        switchType = item.switchType or switchType
+    elseif isUpgraded then
+        rarity = bonusToRarity(bonus)
+    end
+
+    local isPreview = false
+    if self.previewItem and self.previewItem.key == keyValue then
+        isPreview = true
+        rarity = self.previewItem.rarity or rarity
+        capVariant = self.previewItem.capVariant or capVariant
+        switchType = self.previewItem.switchType or switchType
+    end
+
+    return {
+        rarity = rarity,
+        capVariant = capVariant,
+        switchType = switchType,
+        bonus = bonus,
+        isUpgraded = isUpgraded,
+        isPreview = isPreview,
+    }
+end
+
+-- Calculate keyboard layout geometry for a given draw origin/scale. Pure
+-- math -- safe to call headless (used by getKeyAtPosition too).
 function KeyboardView:calculateDimensions(x, y, scale)
     scale = scale or 1.0
-    local totalWidth = 0
-    local totalHeight = 0
+
+    -- `scale` is an approximate target multiplier of the 32px native cap art
+    -- (scale=1.0 -> capScale=2, the pack's intended "chunky 2x" look); round
+    -- *down* to the nearest whole number so the art is never drawn at a
+    -- fractional scale (which is what made the old 16px-on-45px sprites
+    -- blurry) and so a caller passing a shrink factor below 1.0 -- still the
+    -- common case until every caller has migrated to the logical canvas --
+    -- gets a smaller, safer board rather than one rounded back up to 2x.
+    local capScale = math.max(1, math.floor(scale * 2 + 1e-6))
+    local keyUnit = CAP_SIZE * capScale
+    local spacing = capScale
 
     local rowWidths = {}
-    local rowHeight = (self.style.keyHeight + self.style.keySpacing) * scale
-
-    -- Calculate width of each row
+    local totalWidth = 0
     for i, row in ipairs(self.layout) do
         local rowWidth = 0
         for _, keyData in ipairs(row) do
-            local width = (self.style.keyWidth * (keyData.w or 1) + self.style.keySpacing) * scale
-            rowWidth = rowWidth + width
+            rowWidth = rowWidth + keyUnit * (keyData.w or 1) + spacing
         end
         rowWidths[i] = rowWidth
         totalWidth = math.max(totalWidth, rowWidth)
     end
 
-    totalHeight = #self.layout * rowHeight
+    local rowHeight = keyUnit + spacing
+    local totalHeight = #self.layout * rowHeight
 
     return {
-        x = x,
-        y = y,
+        x = math.floor(x),
+        y = math.floor(y),
         width = totalWidth,
         height = totalHeight,
         rowWidths = rowWidths,
         rowHeight = rowHeight,
-        scale = scale
+        capScale = capScale,
+        keyUnit = keyUnit,
+        spacing = spacing,
+        scale = scale,
     }
 end
 
--- Activate a key (for highlighting)
+-- Key is held down right now (physical depress, no timeout).
 function KeyboardView:activateKey(key)
     key = string.lower(key)
     self.activeKeys[key] = true
-
-    -- Add a "press" animation
-    self:animateKeyPress(key)
 end
 
--- Deactivate a key
 function KeyboardView:deactivateKey(key)
     key = string.lower(key)
     self.activeKeys[key] = nil
 end
 
--- Animate a key press
-function KeyboardView:animateKeyPress(key)
-    local animation = {
-        key = key,
-        type = "press",
-        progress = 0,
-        duration = 0.2,
-        maxScale = 1.2
-    }
-
-    table.insert(self.animations, animation)
+-- Momentary press pulse. result = nil | "correct" | "error".
+function KeyboardView:animateKeyPress(key, result)
+    key = string.lower(key)
+    table.insert(self.animations, { key = key, type = "press", progress = 0, duration = 0.12 })
+    if result == "correct" or result == "error" then
+        table.insert(self.animations, { key = key, type = result, progress = 0, duration = 0.35 })
+    end
 end
 
--- Update animations
+-- Live-preview an item on its target key (e.g. a hovered shop offer) without
+-- touching the model. Pass nil to clear.
+function KeyboardView:setPreviewItem(item)
+    if not item or not item.key then
+        self.previewItem = nil
+        return
+    end
+    self.previewItem = {
+        key = string.lower(item.key),
+        rarity = item.rarity,
+        capVariant = item.capVariant,
+        switchType = item.switchType,
+    }
+end
+
 function KeyboardView:update(dt)
-    -- Update existing animations
     for i = #self.animations, 1, -1 do
         local anim = self.animations[i]
         anim.progress = anim.progress + dt
-
-        -- Remove completed animations
         if anim.progress >= anim.duration then
             table.remove(self.animations, i)
         end
     end
 end
 
--- Draw the keyboard at the specified position with optional scaling
+-- Draw the keyboard at the specified position with optional scaling.
 function KeyboardView:draw(x, y, scale)
+    if _G.HEADLESS or not love.graphics then return end
+
     local dims = self:calculateDimensions(x, y, scale)
 
-    -- Draw keyboard background/border if needed
-    love.graphics.setColor(0.15, 0.15, 0.15, 0.9)
-    love.graphics.rectangle("fill", dims.x - 10, dims.y - 10,
-            dims.width + 20, dims.height + 20,
-            10, 10)
+    Theme.setColor("panel", 0.9)
+    love.graphics.rectangle("fill",
+        dims.x - dims.spacing * 2, dims.y - dims.spacing * 2,
+        dims.width + dims.spacing * 4, dims.height + dims.spacing * 4)
 
-    local font = ResourceManager:getFont(self.style.fontName, self.style.fontSize * dims.scale)
-    love.graphics.setFont(font)
+    local font = Theme.font("small")
+    if font then love.graphics.setFont(font) end
 
-    -- Draw each row of keys
     local rowY = dims.y
     for i, row in ipairs(self.layout) do
-        -- Center the row horizontally
-        local rowX = dims.x + (dims.width - dims.rowWidths[i]) / 2
+        local rowX = dims.x + math.floor((dims.width - dims.rowWidths[i]) / 2)
 
-        -- Draw each key in the row
         for _, keyData in ipairs(row) do
-            local keyWidth = self.style.keyWidth * (keyData.w or 1) * dims.scale
-            local keyHeight = self.style.keyHeight * dims.scale
-
-            -- Determine key value (for matching with active/upgraded status)
             local keyDisplay = keyData.key
             local keyValue = string.lower(keyDisplay)
             if keyDisplay == "Space" then keyValue = " " end
 
-            -- Check if key is active or upgraded
-            local isActive = self.activeKeys[keyValue] ~= nil
-            local isUpgraded = self.keyboardModel:isKeyUpgraded(keyValue)
-            local upgradeLevel = self.keyboardModel:getKeyBonus(keyValue)
+            local keyWidth = dims.keyUnit * (keyData.w or 1)
+            local keyHeight = dims.keyUnit
 
-            -- Apply any active animations
-            local animScale = 1.0
+            local info = self:resolveKeySpec(keyValue)
+            local isHeld = self.activeKeys[keyValue] ~= nil
+
+            local pressed = isHeld
+            local glow = nil
             for _, anim in ipairs(self.animations) do
-                if anim.key == keyValue and anim.type == "press" then
-                    local t = anim.progress / anim.duration
-                    -- Ease out animation curve
-                    t = 1 - (1 - t) * (1 - t)
-                    animScale = 1 + (anim.maxScale - 1) * (1 - t)
-                    break
+                if anim.key == keyValue and anim.progress < anim.duration then
+                    if anim.type == "press" then
+                        pressed = true
+                    elseif anim.type == "correct" or anim.type == "error" then
+                        glow = anim.type
+                    end
                 end
             end
 
-            -- Draw key using sprite or shapes
-            if self.useSprites and self.spriteMapper then
-                -- Try to draw the key using sprite mapper
-                local isDark = isUpgraded or isActive
-                
-                -- Calculate key position with animation scaling
-                local keyX = rowX + (keyWidth - keyWidth * animScale) / 2
-                local keyY = rowY + (keyHeight - keyHeight * animScale) / 2
-                keyWidth = keyWidth * animScale
-                keyHeight = keyHeight * animScale
-                
-                -- Attempt to draw with sprite mapper first
-                local success = self.spriteMapper:drawKey(keyValue, keyX, keyY, keyWidth, keyHeight, isDark)
-                
-                -- If sprite drawing fails, fall back to shape-based rendering
-                if not success then
-                    self:drawKeyAsShape(keyX, keyY, keyWidth, keyHeight, keyDisplay, isUpgraded, isActive, animScale)
-                end
-            else
-                -- Draw key using rectangles and shapes (fallback method)
-                self:drawKeyAsShape(rowX, rowY, keyWidth, keyHeight, keyDisplay, isUpgraded, isActive, animScale)
+            local spec = {
+                char = keyValue,
+                display = keyDisplay,
+                rarity = info.rarity,
+                capVariant = info.capVariant,
+                switchType = info.switchType,
+                pressed = pressed,
+                active = info.isPreview,
+                glow = glow,
+                bonus = info.isUpgraded and info.bonus or nil,
+            }
+
+            local ok = pcall(CapRenderer.draw, rowX, rowY, keyWidth, keyHeight, spec)
+            if not ok then
+                self:drawKeyAsShape(rowX, rowY, keyWidth, keyHeight, keyDisplay, info.isUpgraded, isHeld)
             end
 
-            -- Draw upgrade indicator if upgraded
-            if isUpgraded then
-                love.graphics.setColor(self.style.upgradeIndicatorColor)
-                local bonusText = string.format("+%.0f%%", upgradeLevel * 100)
-                local bonusWidth = font:getWidth(bonusText)
-                love.graphics.print(
-                        bonusText,
-                        rowX + keyWidth - bonusWidth - 5,
-                        rowY + keyHeight - font:getHeight() - 2
-                )
-            end
-
-            -- Move to next key position
-            rowX = rowX + keyWidth + self.style.keySpacing * dims.scale
+            rowX = rowX + keyWidth + dims.spacing
         end
 
-        -- Move to next row
         rowY = rowY + dims.rowHeight
     end
 
-    -- Reset color
     love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Helper method for drawing keys with shapes
-function KeyboardView:drawKeyAsShape(x, y, width, height, keyDisplay, isUpgraded, isActive, animScale)
-    -- Determine colors based on state
-    local keyColor = self.style.keyColor
-    if isUpgraded then
-        keyColor = self.style.keyUpgradedColor
+-- Defensive fallback if CapRenderer itself fails (e.g. image generation
+-- rejected by the driver) -- plain flat-shaded rectangles, still themed.
+function KeyboardView:drawKeyAsShape(x, y, width, height, keyDisplay, isUpgraded, isActive)
+    local fillName = isActive and "accent" or (isUpgraded and "success" or "panelLight")
+    Theme.setColor(fillName)
+    love.graphics.rectangle("fill", x, y, width, height)
+
+    Theme.setColor("border")
+    love.graphics.rectangle("line", x, y, width, height)
+
+    local label = keyDisplay ~= "Space" and keyDisplay or nil
+    if label then
+        local font = Theme.font("small")
+        if font then
+            love.graphics.setFont(font)
+            Theme.setColor("text")
+            local textWidth = font:getWidth(label)
+            local textHeight = font:getHeight()
+            love.graphics.print(label, x + (width - textWidth) / 2, y + (height - textHeight) / 2)
+        end
     end
-    if isActive then
-        keyColor = self.style.keyHighlightColor
-    end
-
-    -- Calculate key position with animation scaling if not already applied
-    local keyX = x
-    local keyY = y
-    if animScale and animScale ~= 1.0 then
-        keyX = x + (width - width * animScale) / 2
-        keyY = y + (height - height * animScale) / 2
-        width = width * animScale
-        height = height * animScale
-    end
-
-    -- Draw key shadow
-    love.graphics.setColor(self.style.keyShadowColor)
-    love.graphics.rectangle(
-            "fill",
-            keyX + self.style.keyShadowOffset,
-            keyY + self.style.keyShadowOffset,
-            width,
-            height,
-            self.style.keyCornerRadius
-    )
-
-    -- Draw key background
-    love.graphics.setColor(keyColor)
-    love.graphics.rectangle(
-            "fill",
-            keyX,
-            keyY,
-            width,
-            height,
-            self.style.keyCornerRadius
-    )
-
-    -- Draw key border
-    love.graphics.setColor(self.style.keyStrokeColor)
-    love.graphics.rectangle(
-            "line",
-            keyX,
-            keyY,
-            width,
-            height,
-            self.style.keyCornerRadius
-    )
-
-    -- Draw key label
-    love.graphics.setColor(self.style.keyTextColor)
-    local font = love.graphics.getFont()
-    local textWidth = font:getWidth(keyDisplay)
-    local textHeight = font:getHeight()
-    love.graphics.print(
-            keyDisplay,
-            keyX + (width - textWidth) / 2,
-            keyY + (height - textHeight) / 2
-    )
 end
 
--- Find which key was clicked
+-- Find which key is at (x, y) given the same origin/scale draw() was called
+-- with. Pure math -- safe to call headless.
 function KeyboardView:getKeyAtPosition(x, y, baseX, baseY, scale)
     local dims = self:calculateDimensions(baseX, baseY, scale)
     local rowY = dims.y
 
     for i, row in ipairs(self.layout) do
-        -- Row horizontal centering
-        local rowX = dims.x + (dims.width - dims.rowWidths[i]) / 2
-        local rowHeight = dims.rowHeight
+        local rowX = dims.x + math.floor((dims.width - dims.rowWidths[i]) / 2)
 
-        -- Check if y is within this row
-        if y >= rowY and y < rowY + rowHeight then
+        if y >= rowY and y < rowY + dims.rowHeight then
             for _, keyData in ipairs(row) do
-                local keyWidth = self.style.keyWidth * (keyData.w or 1) * dims.scale
+                local keyWidth = dims.keyUnit * (keyData.w or 1)
 
-                -- Check if x is within this key
                 if x >= rowX and x < rowX + keyWidth then
                     local keyDisplay = keyData.key
                     local keyValue = string.lower(keyDisplay)
@@ -301,7 +300,7 @@ function KeyboardView:getKeyAtPosition(x, y, baseX, baseY, scale)
                     return keyValue, keyDisplay
                 end
 
-                rowX = rowX + keyWidth + self.style.keySpacing * dims.scale
+                rowX = rowX + keyWidth + dims.spacing
             end
         end
 
