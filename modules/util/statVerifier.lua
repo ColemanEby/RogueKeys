@@ -1,187 +1,90 @@
 -- modules/util/statVerifier.lua
--- Utility for verifying that stats are being properly saved and loaded
--- Updated with error handling
+-- Read-only sanity check: compares the raw save file on disk against what
+-- PlayerModel.load() produces.
+--
+-- This module used to also expose testSaveAndLoad, which built a throwaway
+-- player with fake stats and called player:save() to check the round trip.
+-- PlayerModel:save() always writes to save/player.lua with no way to redirect
+-- it to a scratch path, so that "test" silently overwrote the real player's
+-- save file every time it ran -- reachable from a debug-mode button in
+-- statsState. It has been removed rather than kept as a live way to destroy
+-- progress. Everything below only reads the save file; it never writes it.
 
 local StatVerifier = {}
 
+local Log = require("modules/util/debugHelper").forModule("StatVerifier")
 
+local STATS_KEYS = {
+    "totalPlayTime", "totalSessions", "totalKeystrokes",
+    "totalMistakes", "totalCorrect", "bestAPM",
+    "bestWPM", "bestAccuracy", "bestStreak",
+    "roundsWithoutError", "perfectRounds",
+    "moneyEarned", "moneySpent",
+}
 
--- Check if player model stats are correctly loaded from save file
+-- Check that the player model's in-memory stats match what is actually on
+-- disk. Read-only.
 function StatVerifier.verifySavedStats()
-    local success, PlayerModel = pcall(require, "modules/player/playerModel")
-    if not success then
-        print("StatVerifier: Failed to require PlayerModel: " .. tostring(PlayerModel))
+    local reqOk, PlayerModel = pcall(require, "modules/player/playerModel")
+    if not reqOk then
+        Log.warn("Failed to require PlayerModel: %s", tostring(PlayerModel))
         return false
     end
-    
-    print("StatVerifier: Starting saved stats verification")
-    
-    -- Try to load the save file directly
+
     local dataPath = "save/player.lua"
-    
-    -- Check if file exists
     if not love.filesystem.getInfo(dataPath) then
-        print("StatVerifier: No save file found at " .. dataPath)
+        Log.info("No save file found at %s", dataPath)
         return false
     end
-    
-    -- Load raw save data
-    local success, chunk = pcall(love.filesystem.load, dataPath)
-    if not success then
-        print("StatVerifier: Error loading save file: " .. tostring(chunk))
+
+    local loadOk, chunk = pcall(love.filesystem.load, dataPath)
+    if not loadOk then
+        Log.warn("Error loading save file: %s", tostring(chunk))
         return false
     end
-    
-    -- Execute chunk to get the data table
-    local success, rawData = pcall(chunk)
-    if not success then
-        print("StatVerifier: Error executing save file: " .. tostring(rawData))
+
+    local runOk, rawData = pcall(chunk)
+    if not runOk or type(rawData) ~= "table" then
+        Log.warn("Error executing save file: %s", tostring(rawData))
         return false
     end
-    
-    -- Load the player model normally
-    local success, player = pcall(PlayerModel.load)
-    if not success then
-        print("StatVerifier: Error loading player model: " .. tostring(player))
+
+    local playerOk, player = pcall(PlayerModel.load)
+    if not playerOk then
+        Log.warn("Error loading player model: %s", tostring(player))
         return false
     end
-    
-    -- Compare key stats between raw data and loaded player model
-    print("StatVerifier: Comparing saved stats with loaded stats")
-    
+
     local rawStats = rawData.stats or {}
     local loadedStats = player and player.stats or {}
-    
-    -- Check key stats
-    local keysToCheck = {
-        "totalPlayTime", "totalSessions", "totalKeystrokes", 
-        "totalMistakes", "totalCorrect", "bestAPM", 
-        "bestWPM", "bestAccuracy", "bestStreak",
-        "roundsWithoutError", "perfectRounds", 
-        "moneyEarned", "moneySpent"
-    }
-    
+
     local allCorrect = true
-    
-    for _, key in ipairs(keysToCheck) do
+    for _, key in ipairs(STATS_KEYS) do
         local rawValue = rawStats[key] or 0
         local loadedValue = loadedStats[key] or 0
-        
-        print(string.format("StatVerifier: %s - Saved: %s, Loaded: %s, Match: %s", 
-            key, tostring(rawValue), tostring(loadedValue), tostring(rawValue == loadedValue)))
-            
         if rawValue ~= loadedValue then
             allCorrect = false
+            Log.debug("%s mismatch - saved: %s, loaded: %s", key, tostring(rawValue), tostring(loadedValue))
         end
     end
-    
-    -- Check other player properties
-    print(string.format("StatVerifier: totalMoney - Saved: %s, Loaded: %s, Match: %s",
-        tostring(rawData.totalMoney or 0), tostring(player and player.totalMoney or 0), 
-        tostring((rawData.totalMoney or 0) == (player and player.totalMoney or 0))))
-        
-    print(string.format("StatVerifier: currentRound - Saved: %s, Loaded: %s, Match: %s",
-        tostring(rawData.currentRound or 1), tostring(player and player.currentRound or 1), 
-        tostring((rawData.currentRound or 1) == (player and player.currentRound or 1))))
-        
-    if (rawData.totalMoney or 0) ~= (player and player.totalMoney or 0) or 
+
+    if (rawData.totalMoney or 0) ~= (player and player.totalMoney or 0) or
        (rawData.currentRound or 1) ~= (player and player.currentRound or 1) then
         allCorrect = false
     end
-    
-    print("StatVerifier: All stats match: " .. tostring(allCorrect))
+
+    Log.info("All stats match: %s", tostring(allCorrect))
     return allCorrect
 end
 
--- Force a test save and load to verify functionality
-function StatVerifier.testSaveAndLoad()
-    local success, PlayerModel = pcall(require, "modules/player/playerModel")
-    if not success then
-        print("StatVerifier: Failed to require PlayerModel: " .. tostring(PlayerModel))
-        return false
-    end
-    
-    print("StatVerifier: Starting save and load test")
-    
-    -- Create a new player with some test stats
-    local player = PlayerModel.new()
-    player.stats.totalKeystrokes = 100
-    player.stats.totalCorrect = 95
-    player.stats.totalMistakes = 5
-    player.stats.bestWPM = 50
-    player.stats.bestAccuracy = 95
-    player.totalMoney = 150
-    
-    -- Save the player data
-    local saveSuccess = player:save()
-    print("StatVerifier: Save result: " .. (saveSuccess and "Success" or "Failed"))
-    
-    if not saveSuccess then
-        return false
-    end
-    
-    -- Load the player data
-    local loadSuccess, loadedPlayer
-    loadSuccess, loadedPlayer = pcall(PlayerModel.load)
-    if not loadSuccess then
-        print("StatVerifier: Failed to load player: " .. tostring(loadedPlayer))
-        return false
-    end
-    
-    -- Compare key stats
-    print("StatVerifier: Comparing test stats after save and load")
-    print(string.format("totalKeystrokes: Original: %d, Loaded: %d", 
-        player.stats.totalKeystrokes, loadedPlayer.stats.totalKeystrokes))
-    print(string.format("totalCorrect: Original: %d, Loaded: %d", 
-        player.stats.totalCorrect, loadedPlayer.stats.totalCorrect))
-    print(string.format("bestWPM: Original: %f, Loaded: %f", 
-        player.stats.bestWPM, loadedPlayer.stats.bestWPM))
-    print(string.format("totalMoney: Original: %d, Loaded: %d", 
-        player.totalMoney, loadedPlayer.totalMoney))
-        
-    -- Check if all key stats match
-    local allMatch = (
-        player.stats.totalKeystrokes == loadedPlayer.stats.totalKeystrokes and
-        player.stats.totalCorrect == loadedPlayer.stats.totalCorrect and
-        player.stats.bestWPM == loadedPlayer.stats.bestWPM and
-        player.totalMoney == loadedPlayer.totalMoney
-    )
-    
-    print("StatVerifier: All test stats match: " .. tostring(allMatch))
-    return allMatch
-end
-
--- Add an integration test entry point that can be called from debugging screens
+-- Entry point used by debug screens. Read-only -- see the module comment.
 function StatVerifier.runIntegrationTest()
-    print("StatVerifier: Starting integration test")
-
-    -- First check if we can write files at all
-    local testPath = "save/test_stat_verifier.tmp"
-    local canWrite = love.filesystem.write(testPath, "test")
-    if canWrite then
-        love.filesystem.remove(testPath)
-    else
-        print("StatVerifier: WARNING - Cannot write files, test will fail")
+    local ok, result = pcall(StatVerifier.verifySavedStats)
+    if not ok then
+        Log.warn("verifySavedStats raised an error: %s", tostring(result))
         return false
     end
-
-    local success, testResult = pcall(StatVerifier.testSaveAndLoad)
-    if not success then
-        print("StatVerifier: Test save/load failed with error: " .. tostring(testResult))
-        testResult = false
-    end
-    
-    local success, verifyResult = pcall(StatVerifier.verifySavedStats)
-    if not success then
-        print("StatVerifier: Verify existing save failed with error: " .. tostring(verifyResult))
-        verifyResult = false
-    end
-    
-    print("StatVerifier: Integration test complete")
-    print("StatVerifier: Test save/load: " .. (testResult and "PASSED" or "FAILED"))
-    print("StatVerifier: Verify existing save: " .. (verifyResult and "PASSED" or "FAILED"))
-    
-    return testResult and verifyResult
+    return result
 end
 
 return StatVerifier
