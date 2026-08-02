@@ -1,38 +1,102 @@
-# Typing Trainer Roguelike
+# RogueKeys
 
-A typing practice game with roguelike progression elements. Improve your typing speed and accuracy while upgrading your keyboard.
+A typing-roguelite built on LÖVE 11.5. Type to fight the clock, earn money
+each round, and spend it in the shop on keycap upgrades that change how your
+keyboard scores. `steammvproadmap.md` in the repo root is the living plan for
+taking this from prototype to a Steam release — read it for the full picture
+of where the project is headed.
 
 ## Features
 
-- **Typing Practice**: Test and improve your typing skills with progressively challenging text
-- **Roguelike Progression**: Earn money and upgrade keys on your keyboard
-- **Statistics Tracking**: Track your progress with detailed stats and visualizations
-- **Customizable Keyboards**: Choose different keyboard layouts and upgrade specific keys
-- **Visual Feedback**: See your keyboard on screen with visual feedback as you type
+- **Typing Practice**: progressively challenging text, WPM/APM/accuracy/streak
+  tracking
+- **Roguelike Progression**: earn money and upgrade keys on your keyboard
+- **Statistics Tracking**: match history and lifetime stats, with a
+  session-over-session graph
+- **Customizable Keyboards**: QWERTY and Dvorak layouts, per-key upgrades
+- **Visual Feedback**: on-screen keyboard reflects your upgrades as you type
 
-## Setup
+## Running the game
 
-1. Install the [LÖVE Framework](https://love2d.org/) (version 11.x recommended)
-2. Clone this repository
-3. Run the setup script (optional but recommended):
-   ```
-   lua setup.lua
-   ```
-4. Run the game:
-   ```
-   love .
-   ```
+Install [LÖVE 11.5](https://love2d.org/) and run:
+
+```
+love .
+```
+
+No install available or don't want one? `tools/get-love.ps1` fetches a
+portable copy (no admin rights) and prints the path to `love.exe`:
+
+```powershell
+$love = pwsh tools/get-love.ps1   # or: powershell tools/get-love.ps1
+& $love .
+```
+
+## Running the tests
+
+The pure-logic suite runs headless (no window, no audio) and is the fast
+feedback loop for anything that isn't visual:
+
+```powershell
+& $love . --test
+```
+
+Every `tests/test_*.lua` file is auto-discovered — see `tests/helpers.lua`
+for the assertion library and `tests/test_foundation.lua` /
+`tests/test_steam.lua` for examples.
+
+For a visual check of a specific screen, use the screenshot mode (boots the
+game, switches to the named state, captures one frame, quits):
+
+```powershell
+& $love . --shot menuState
+```
+
+The PNG lands under `%APPDATA%\LOVE\RogueKeys\screenshots\`.
+
+## Building
+
+`tools/build.ps1` produces a distributable build:
+
+```powershell
+pwsh tools/build.ps1            # or: powershell tools/build.ps1
+pwsh tools/build.ps1 -Clean     # wipe dist/ first
+pwsh tools/build.ps1 -LovePath "C:\path\to\love.exe"
+```
+
+It stages the game source (excluding dev-only files), zips it to
+`dist/RogueKeys.love`, verifies the zip actually boots by running it with
+`--test`, then fuses it onto the LÖVE runtime to produce
+`dist/win64/RogueKeys.exe` alongside LÖVE's DLLs and license. It downloads a
+LÖVE runtime via `tools/get-love.ps1` if `-LovePath` isn't given, and exits
+non-zero on any failure. `dist/` is gitignored — nothing under it should be
+committed.
 
 ## Keyboard Sprites
 
-The game can use sprites for keyboard keys if you provide a sprite sheet. Place your sprite sheet at:
+The game can use sprites for keyboard keys if you provide a sprite sheet.
+The legacy 16x16 sheet goes at:
+
 ```
 resources/sprites/keyboard_letters_and_symbols.png
 ```
 
-The expected format is a 128x224 pixel image with 16x16 pixel key sprites arranged in an 8x14 grid. The sprite mapping follows the structure defined in `modules/keyboard/keySpriteMapper.lua`.
+(128x224 pixels, an 8x14 grid; mapping defined in
+`modules/keyboard/keySpriteMapper.lua`.) If no sprite sheet is found, the
+game falls back to shape-based key rendering — nothing crashes without art.
 
-If no sprite sheet is found, the game will fall back to shape-based key rendering.
+## Adding assets
+
+The licensed art/font/audio packs referenced in `steammvproadmap.md` and
+`CREDITS.txt` aren't bundled in this repo, but the loaders check for them
+automatically and fall back to procedural placeholders when absent. Drop
+real assets in and restart — no code changes needed:
+
+```
+resources/fonts/                    # monogram (typing line), m6x11 (display)
+resources/sprites/keycaps_32.png    # 32px keycap sheet (Phase 2 rendering)
+resources/sounds/                   # key thocks, UI/coin SFX, music loops
+```
 
 ## Directory Structure
 
@@ -43,30 +107,40 @@ If no sprite sheet is found, the game will fall back to shape-based key renderin
 │   ├── resourceManager.lua # Asset management (sprites, fonts, sounds)
 │   └── stateManager.lua    # Game state management
 ├── modules/                # Game modules
+│   ├── audio/              # Audio facade (Audio.playSfx/playMusic/...)
+│   ├── game/                # Shared game context (Context.player(), Context.run)
 │   ├── keyboard/           # Keyboard-related modules
 │   │   ├── keyboardModel.lua  # Data model for keyboards
 │   │   ├── keyboardView.lua   # Visual representation of keyboards
 │   │   └── keySpriteMapper.lua # Sprite mapping for keyboard keys
 │   ├── player/             # Player-related modules
 │   │   └── playerModel.lua # Player progression and stats
+│   ├── steam/              # Optional Steamworks wrapper (no-ops without luasteam)
 │   ├── typing/             # Typing mechanics
 │   │   ├── textGenerator.lua # Text generation for typing challenges
 │   │   └── trainer.lua       # Core typing trainer functionality
-│   └── ui/                 # UI components
-│       └── menuBuilder.lua # Menu building system
+│   ├── ui/                 # UI components, theme and the logical canvas
+│   │   ├── menuBuilder.lua # Menu building system
+│   │   ├── screen.lua      # 640x360 logical pixel canvas
+│   │   └── theme.lua       # Colors, fonts, spacing — the only source of both
+│   └── util/               # Serialization, file I/O, stat helpers
 ├── states/                 # Game states
 │   ├── menuState.lua       # Main menu
 │   ├── roundState.lua      # Typing round gameplay
 │   ├── shopState.lua       # Upgrade shop
 │   └── statsState.lua      # Statistics display
-├── resources/              # Game assets
+├── resources/              # Game assets (see "Adding assets" above)
 │   ├── sprites/            # Image assets
 │   ├── fonts/              # Font assets
 │   └── sounds/             # Sound assets
 ├── data/                   # Game data
 │   └── words.txt           # Word list for text generation
+├── tests/                  # Headless logic test suite (`love . --test`)
+├── tools/                  # Dev tooling (get-love.ps1, build.ps1)
+├── docs/                   # Steam release checklist, achievements spec
 ├── main.lua                # Main entry point
-├── setup.lua               # Project setup script
+├── conf.lua                # LÖVE window/identity configuration
+├── steammvproadmap.md      # The living plan to a Steam-ready build
 └── README.md               # This file
 ```
 
@@ -474,12 +548,16 @@ return {
 }
 ```
 
-## Issues
-- [X] Not saving match history properly
-- [ ] Not displaying match history stats properly on stats pages with the bar graph
-- [ ] Not able to retrieve the match history stats from player module
-- [ ] S key no longer brings to shop menu from post round screen
+## Known Issues
 
+- The stats screen's bar graph (`states/statsState.lua`) computes a
+  "reversed" bar position but re-uses the un-reversed match index to look up
+  the value, so bars are positioned in one order and colored/sized from
+  another. Match history saving, loading and retrieval from `PlayerModel`
+  are otherwise working.
+
+See `steammvproadmap.md` (Phase 0, "Stabilize the foundation") for the
+broader stabilization scope this and future work is tracked against.
 
 ## Extending the Game
 
