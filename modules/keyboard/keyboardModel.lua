@@ -9,6 +9,30 @@ local Rarity = require("modules/items/rarity")
 local KeyboardModel = {}
 KeyboardModel.__index = KeyboardModel
 
+-- Copy an item and its effect table one level deep, so that whatever produced
+-- it -- a shop offer table, a deserialized save row, another board being
+-- cloned -- can neither mutate installed state later nor be mutated by it.
+local function copyItem(item)
+    local copy = {}
+    for k, v in pairs(item) do copy[k] = v end
+
+    if type(item.effect) == "table" then
+        local effectCopy = {}
+        for k, v in pairs(item.effect) do
+            if type(v) == "table" then
+                local nested = {}
+                for i, vv in ipairs(v) do nested[i] = vv end
+                effectCopy[k] = nested
+            else
+                effectCopy[k] = v
+            end
+        end
+        copy.effect = effectCopy
+    end
+
+    return copy
+end
+
 -- Small, additive global-multiplier reward for owning higher-rarity gear.
 -- This is what getTotalMultiplier() actually reflects now -- previously
 -- self.multiplier was initialised to 1.0 and never touched again.
@@ -280,26 +304,8 @@ function KeyboardModel:installItem(item)
         end
     end
 
-    -- Shallow-copy the item (and its effect table one level deep) so that
-    -- whatever produced it -- a shop offer table, a deserialized save row --
-    -- can't reach in and mutate installed board state later.
-    local installed = {}
-    for k, v in pairs(item) do installed[k] = v end
+    local installed = copyItem(item)
     installed.key = key
-
-    if type(item.effect) == "table" then
-        local effectCopy = {}
-        for k, v in pairs(item.effect) do
-            if type(v) == "table" then
-                local nested = {}
-                for i, vv in ipairs(v) do nested[i] = vv end
-                effectCopy[k] = nested
-            else
-                effectCopy[k] = v
-            end
-        end
-        installed.effect = effectCopy
-    end
 
     table.insert(self.installedItems, installed)
 
@@ -437,10 +443,19 @@ end
 -- Serialize the keyboard model for saving. installedItems is the new-system
 -- data; upgrades is kept alongside it for the legacy flat-bonus map so old
 -- saves round-trip unchanged even after a player also starts buying items.
+-- Everything mutable is copied, never handed out by reference. Callers use
+-- deserialize(kb:serialize()) to clone a board (the shop's live "item
+-- installed" preview does exactly this), and a shared upgrades table meant
+-- the preview silently mutated the player's real keyboard.
 function KeyboardModel:serialize()
     local installed = {}
     for i, item in ipairs(self:getInstalled()) do
-        installed[i] = item
+        installed[i] = copyItem(item)
+    end
+
+    local upgrades = {}
+    for key, bonus in pairs(self.upgrades) do
+        upgrades[key] = bonus
     end
 
     return {
@@ -448,7 +463,7 @@ function KeyboardModel:serialize()
         name = self.name,
         description = self.description,
         multiplier = self.multiplier,
-        upgrades = self.upgrades,
+        upgrades = upgrades,
         installedItems = installed,
     }
 end
@@ -470,7 +485,14 @@ function KeyboardModel.deserialize(data)
     if data.name then keyboard.name = data.name end
     if data.description then keyboard.description = data.description end
     if data.multiplier then keyboard.multiplier = data.multiplier end
-    if data.upgrades then keyboard.upgrades = data.upgrades end
+
+    -- Copied, not aliased: deserialize(kb:serialize()) is how a board gets
+    -- cloned, and sharing this table makes the clone mutate its source.
+    if type(data.upgrades) == "table" then
+        for key, bonus in pairs(data.upgrades) do
+            keyboard.upgrades[key] = bonus
+        end
+    end
 
     if data.installedItems and type(data.installedItems) == "table" then
         for _, item in ipairs(data.installedItems) do

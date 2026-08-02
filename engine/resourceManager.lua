@@ -187,35 +187,54 @@ function ResourceManager:getSoundKind(name)
     return entry and entry.kind or nil
 end
 
--- Load all assets from a directory with subdirectories
+-- Load all assets from a directory with subdirectories.
+--
+-- The recursion is bounded three ways. A fused build merges the source and
+-- save directories into one virtual filesystem, where an unguarded walk can
+-- recurse forever -- that showed up as "ERROR initializing ResourceManager:
+-- stack overflow" in the packaged .exe while running fine from source.
+local MAX_SCAN_DEPTH = 8
+
 function ResourceManager:loadDirectory(baseDir)
-    local function scanDirectory(dir)
+    local visited = {}
+
+    local function scanDirectory(dir, depth)
+        if depth > MAX_SCAN_DEPTH then
+            debugPrint("ResourceManager: max scan depth reached at " .. dir)
+            return
+        end
+        if visited[dir] then return end
+        visited[dir] = true
+
         local items = love.filesystem.getDirectoryItems(dir)
         for _, item in ipairs(items) do
-            local path = dir .. "/" .. item
-            local info = love.filesystem.getInfo(path)
+            -- "." and ".." resolve back into the tree being walked.
+            if item ~= "." and item ~= ".." then
+                local path = dir .. "/" .. item
+                local info = love.filesystem.getInfo(path)
 
-            if info and info.type == "file" then
-                -- Load based on file extension
-                if hasExtension(item, IMAGE_EXTENSIONS) then
-                    local name = string.gsub(item, "%.%w+$", "")
-                    self:loadSprite(name, path)
-                elseif hasExtension(item, SOUND_EXTENSIONS) then
-                    local name = string.gsub(item, "%.%w+$", "")
-                    self:loadSound(name, path, "sfx")
-                elseif hasExtension(item, FONT_EXTENSIONS) then
-                    -- Only preload default size, others loaded on demand
-                    local name = string.gsub(item, "%.%w+$", "")
-                    self:loadFont(name, path, DEFAULT_FONT_SIZE)
+                if info and info.type == "file" then
+                    -- Load based on file extension
+                    if hasExtension(item, IMAGE_EXTENSIONS) then
+                        local name = string.gsub(item, "%.%w+$", "")
+                        self:loadSprite(name, path)
+                    elseif hasExtension(item, SOUND_EXTENSIONS) then
+                        local name = string.gsub(item, "%.%w+$", "")
+                        self:loadSound(name, path, "sfx")
+                    elseif hasExtension(item, FONT_EXTENSIONS) then
+                        -- Only preload default size, others loaded on demand
+                        local name = string.gsub(item, "%.%w+$", "")
+                        self:loadFont(name, path, DEFAULT_FONT_SIZE)
+                    end
+                elseif info and info.type == "directory" then
+                    scanDirectory(path, depth + 1)
                 end
-            elseif info and info.type == "directory" then
-                scanDirectory(path)
             end
         end
     end
 
     if love.filesystem.getInfo(baseDir) then
-        scanDirectory(baseDir)
+        scanDirectory(baseDir, 1)
     else
         debugPrint("ResourceManager: Directory not found: " .. baseDir)
     end

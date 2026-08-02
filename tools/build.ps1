@@ -83,6 +83,17 @@ if (-not (Test-Path $LovePath)) {
     Fail "LOVE runtime not found at '$LovePath'"
 }
 
+# Accept either love.exe itself or the directory containing it. Passing the
+# directory used to pass Test-Path and then fail much later trying to invoke
+# the directory as a command.
+if (Test-Path $LovePath -PathType Container) {
+    $candidate = Join-Path $LovePath "love.exe"
+    if (-not (Test-Path $candidate)) {
+        Fail "No love.exe found in directory '$LovePath'"
+    }
+    $LovePath = $candidate
+}
+
 $loveDir = Split-Path -Parent $LovePath
 $loveExe = $LovePath
 $lovecExe = Join-Path $loveDir "lovec.exe"
@@ -138,13 +149,23 @@ if (-not (Test-Path $loveFile)) {
 }
 
 # --- 4. Verify the .love actually boots ---------------------------------------
-Write-Step "Verifying $loveFile with --test"
-& $lovecExe $loveFile --test
-$testExitCode = $LASTEXITCODE
-if ($testExitCode -ne 0) {
-    Fail "'$lovecExe `"$loveFile`" --test' exited $testExitCode -- refusing to package a broken build"
+# NOT --test: tests/ is deliberately excluded from the shipped package, so
+# --test would discover nothing and exit 0, "verifying" a build that could be
+# completely broken. --shot boots the real game, runs a state for ~1s and
+# captures a frame, which is what we actually need to know here.
+Write-Step "Verifying $loveFile boots (--shot menuState)"
+$shotOutput = & $lovecExe $loveFile --shot menuState 2>&1
+$shotExitCode = $LASTEXITCODE
+
+if ($shotExitCode -ne 0) {
+    $shotOutput | Write-Host
+    Fail "packaged .love exited $shotExitCode on boot -- refusing to package a broken build"
 }
-Write-Step "Verification passed (exit 0)"
+if (-not ($shotOutput | Select-String -Quiet -Pattern "SHOT OK")) {
+    $shotOutput | Write-Host
+    Fail "packaged .love booted but never rendered a frame -- refusing to package a broken build"
+}
+Write-Step "Verification passed (booted and rendered)"
 
 # --- 5. Fuse the Windows exe ---------------------------------------------------
 Write-Step "Fusing Windows executable"

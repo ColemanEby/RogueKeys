@@ -239,13 +239,37 @@ function TypingTrainer:handleInput(char)
             Audio.playSfx("coin")
         end
     else
-        self.mistakes = self.mistakes + 1
-        self.currentStreak = 0
-        self.lastMilestoneStreak = 0 -- rebuilding the streak should re-trigger milestones
-        self:startShake(0.3, 5)
+        -- The grace and protect effects only ever fire on a miss, so they have
+        -- no path through computeKeyScore (which is correct-keystroke-only by
+        -- contract). Without this call both effect kinds are inert.
+        local miss = { forgiven = false, protected = false }
+        if self.keyboardModel and self.keyboardModel.computeKeyError then
+            local ok, result = pcall(function()
+                return self.keyboardModel:computeKeyError(expectedChar, {
+                    streak = self.currentStreak,
+                    prevChar = self.lastChar,
+                    round = self.round or 1,
+                    isVowel = VOWELS[expectedChar:lower()] or false,
+                })
+            end)
+            if ok and type(result) == "table" then miss = result end
+        end
+
+        if miss.forgiven then
+            -- Forgiven: the keystroke costs neither an error nor the streak.
+            isCorrect = true
+        else
+            self.mistakes = self.mistakes + 1
+            if not miss.protected then
+                self.currentStreak = 0
+                -- Rebuilding the streak should re-trigger milestones.
+                self.lastMilestoneStreak = 0
+            end
+            self:startShake(0.3, 5)
+        end
 
         if self.onKeyMissed then
-            self.onKeyMissed(char, expectedChar)
+            self.onKeyMissed(char, expectedChar, miss)
         end
     end
 

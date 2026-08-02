@@ -152,6 +152,18 @@ function Runner.run()
     print("=== RogueKeys test suite ===")
     if filters then print("filter: " .. table.concat(filters, ",")) end
 
+    -- Discovering nothing is a failure, not a pass. The packaged .love
+    -- excludes tests/, so a build that "verified" itself with --test would
+    -- otherwise report ALL TESTS PASSED (0) and prove nothing at all.
+    if #files == 0 then
+        print("")
+        print("ERROR: no test suites found in tests/ -- expected tests/test_*.lua")
+        print("")
+        print("TESTS: 0 passed, 1 failed, 0 skipped")
+        print("")
+        return 1
+    end
+
     for _, name in ipairs(files) do
         local okLoad, suite = pcall(require, "tests/" .. name)
 
