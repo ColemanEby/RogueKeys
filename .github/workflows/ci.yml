@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Headless test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # LOVE 11.5 pinned to match conf.lua's t.version. AppImages need FUSE to
+      # run directly, which GitHub's runners don't ship with, so extract it
+      # instead of executing it in place.
+      - name: Install LOVE 11.5
+        run: |
+          curl -fL -o love.AppImage \
+            https://github.com/love2d/love/releases/download/11.5/love-11.5-x86_64.AppImage
+          chmod +x love.AppImage
+          ./love.AppImage --appimage-extract
+
+      # conf.lua sets t.window = false under --test, so no display should be
+      # required, but the LOVE binary still touches SDL's video init on the
+      # way there -- xvfb-run keeps that from being a flaky failure mode.
+      - name: Run headless test suite
+        run: xvfb-run -a ./squashfs-root/bin/love . --test
