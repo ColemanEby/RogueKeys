@@ -60,22 +60,16 @@ function CreditsState.enter(params)
     returnTo = params.returnTo or "menuState"
     lines = loadLines()
     scrollLines = 0
-
-    -- StateManager does not forward wheelmoved, so this state owns the
-    -- global callback for as long as it is active and releases it on exit.
-    if love and not _G.HEADLESS then
-        love.wheelmoved = function(_, wy)
-            if wy ~= 0 then
-                scrollLines = scrollLines - wy * WHEEL_STEP
-                clampScroll()
-            end
-        end
-    end
 end
 
 function CreditsState.exit()
-    if love and not _G.HEADLESS then
-        love.wheelmoved = nil
+    lines = nil
+end
+
+function CreditsState.wheelmoved(_, wy)
+    if wy ~= 0 then
+        scrollLines = scrollLines - wy * WHEEL_STEP
+        clampScroll()
     end
 end
 

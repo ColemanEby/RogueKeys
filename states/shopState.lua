@@ -417,12 +417,24 @@ local function drawCard(rect, item, isHovered, isSelected, canAfford)
     local keyLabel = (item.key == " ") and "SPC" or string.upper(item.key or "?")
     love.graphics.printf(keyLabel, capX, capY + capSize / 2 - 8, capSize, "center")
 
-    love.graphics.setFont(Theme.font("small"))
-    Theme.setColor("text")
-    love.graphics.printf(item.name or "", rect.x + 2, capY + capSize + 4, rect.w - 4, "center")
+    -- Both the name and the effect text can wrap, so each block's start is
+    -- measured from the previous one rather than assumed to be one line tall.
+    local smallFont = Theme.font("small")
+    love.graphics.setFont(smallFont)
 
-    Theme.setColor("textMuted")
-    love.graphics.printf(formatEffect(item), rect.x + 2, capY + capSize + 16, rect.w - 4, "center")
+    local textX, textW = rect.x + 2, rect.w - 4
+    local lineHeight = smallFont:getHeight()
+    local y = capY + capSize + 4
+
+    local function block(text, colorName)
+        Theme.setColor(colorName)
+        local _, lines = smallFont:getWrap(text, textW)
+        love.graphics.printf(text, textX, y, textW, "center")
+        y = y + math.max(1, #lines) * lineHeight + 2
+    end
+
+    block(item.name or "", "text")
+    block(formatEffect(item), "textMuted")
 
     Theme.setColor(canAfford and "accent" or "error")
     love.graphics.printf((item.cost or 0) .. "g", rect.x + 2, rect.y + rect.h - 13, rect.w - 4, "center")

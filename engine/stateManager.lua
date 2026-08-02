@@ -397,6 +397,36 @@ function StateManager.textinput(text)
     end
 end
 
+-- Mouse and wheel input go through the manager for the same reason keyboard
+-- input does: so the transition guard applies to every input path, not just
+-- the keyboard. main.lua translates coordinates into logical space first.
+local function forwardMouse(callback, ...)
+    if StateManager.transitioning then return end
+    local state = StateManager.current
+    if not state or not state[callback] then return end
+
+    local success, err = pcall(state[callback], ...)
+    if not success then
+        print("StateManager: Error during " .. callback .. ": " .. tostring(err))
+    end
+end
+
+function StateManager.mousepressed(x, y, button, istouch, presses)
+    forwardMouse("mousepressed", x, y, button, istouch, presses)
+end
+
+function StateManager.mousereleased(x, y, button, istouch, presses)
+    forwardMouse("mousereleased", x, y, button, istouch, presses)
+end
+
+function StateManager.mousemoved(x, y, dx, dy, istouch)
+    forwardMouse("mousemoved", x, y, dx, dy, istouch)
+end
+
+function StateManager.wheelmoved(dx, dy)
+    forwardMouse("wheelmoved", dx, dy)
+end
+
 -- Handle window resize
 function StateManager.resize(w, h)
     if StateManager.current and StateManager.current.resize then

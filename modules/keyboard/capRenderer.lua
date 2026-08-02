@@ -81,6 +81,8 @@ end
 -- shorter skirt and thinner highlight so they read as flatter/sunk in;
 -- combined with the 2px downward draw offset in CapRenderer.draw, this sells
 -- the depress without ever scaling the art.
+local SHINE_LENGTH = 6
+
 local function buildTemplateData(pressed)
     local size = CAP_SIZE
     local data = love.image.newImageData(size, size)
@@ -90,24 +92,27 @@ local function buildTemplateData(pressed)
 
     for y = 0, size - 1 do
         for x = 0, size - 1 do
-            local isCorner = (x == 0 or x == size - 1) and (y == 0 or y == size - 1)
-            if isCorner then
-                data:setPixel(x, y, 0, 0, 0, 0)
+            -- Corners are opaque outline rather than transparent. A wide key
+            -- (the spacebar is 5 units) stretches the template horizontally,
+            -- which turns a single transparent corner pixel into a block wide
+            -- enough to expose the switch stem behind it as a stray red dot.
+            local role
+            if x == 0 or x == size - 1 or y == 0 or y == size - 1 then
+                role = ROLE_OUTLINE
+            elseif x <= skirt or x >= size - 1 - skirt or y <= skirt or y >= size - 1 - skirt then
+                role = ROLE_SKIRT
+            elseif y <= skirt + highlightBand then
+                role = ROLE_HIGHLIGHT
+            elseif (x - y) >= 3 and (x - y) <= 4
+                and y > skirt + highlightBand
+                and y <= skirt + highlightBand + SHINE_LENGTH then
+                -- A short glint below the highlight band. Left unbounded it
+                -- runs the full diagonal and reads as a scratch, not a shine.
+                role = ROLE_SHINE
             else
-                local role
-                if x == 0 or x == size - 1 or y == 0 or y == size - 1 then
-                    role = ROLE_OUTLINE
-                elseif x <= skirt or x >= size - 1 - skirt or y <= skirt or y >= size - 1 - skirt then
-                    role = ROLE_SKIRT
-                elseif y <= skirt + highlightBand then
-                    role = ROLE_HIGHLIGHT
-                elseif (x - y) >= 3 and (x - y) <= 4 and y > skirt + highlightBand then
-                    role = ROLE_SHINE
-                else
-                    role = ROLE_BODY
-                end
-                data:setPixel(x, y, role / 5, 0, 0, 1)
+                role = ROLE_BODY
             end
+            data:setPixel(x, y, role / 5, 0, 0, 1)
         end
     end
 
@@ -264,11 +269,16 @@ function CapRenderer.draw(x, y, w, h, spec)
         end
     end
 
-    -- 1. switch/housing base. The cap is drawn at full w/h too (never scaled
-    -- fractionally), so the housing only truly shows through the template's
-    -- clipped corner pixels and the strip revealed by the press offset.
+    -- 1. switch/housing base. Drawn as a stem strip along the bottom edge that
+    -- the cap sits on top of, rather than a full rect behind the cap: at full
+    -- w/h the cap covers everything except the template's four clipped corner
+    -- pixels, which read as stray colored dots on every key instead of as a
+    -- switch. The strip is what actually reads as "stem peeking under the cap",
+    -- and the press offset widens it, so a press looks like travel.
+    local stemH = math.max(2, math.floor(h / 16))
+    if pressed then stemH = stemH + PRESS_OFFSET end
     Theme.setColor("switch." .. switchType)
-    love.graphics.rectangle("fill", x, y, w, h)
+    love.graphics.rectangle("fill", x + stemH, y + h - stemH, w - stemH * 2, stemH)
 
     local capY = pressed and (y + PRESS_OFFSET) or y
 

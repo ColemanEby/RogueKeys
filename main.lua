@@ -300,35 +300,28 @@ local function mouseCoords(x, y)
 end
 
 function love.mousepressed(x, y, button, istouch, presses)
-    local state = StateManager.current
-    if not state or not state.mousepressed then return end
-
     local gx, gy = mouseCoords(x, y)
-    local ok, err = pcall(state.mousepressed, gx, gy, button, istouch, presses)
-    if not ok then print("ERROR in mousepressed: " .. tostring(err)) end
+    StateManager.mousepressed(gx, gy, button, istouch, presses)
 end
 
 function love.mousereleased(x, y, button, istouch, presses)
-    local state = StateManager.current
-    if not state or not state.mousereleased then return end
-
     local gx, gy = mouseCoords(x, y)
-    local ok, err = pcall(state.mousereleased, gx, gy, button, istouch, presses)
-    if not ok then print("ERROR in mousereleased: " .. tostring(err)) end
+    StateManager.mousereleased(gx, gy, button, istouch, presses)
 end
 
 function love.mousemoved(x, y, dx, dy, istouch)
-    local state = StateManager.current
-    if not state or not state.mousemoved then return end
-
     local gx, gy = mouseCoords(x, y)
+
     local scale = Screen.getScale()
     if usesLogicalCanvas() and scale > 0 then
         dx, dy = dx / scale, dy / scale
     end
 
-    local ok, err = pcall(state.mousemoved, gx, gy, dx, dy, istouch)
-    if not ok then print("ERROR in mousemoved: " .. tostring(err)) end
+    StateManager.mousemoved(gx, gy, dx, dy, istouch)
+end
+
+function love.wheelmoved(dx, dy)
+    StateManager.wheelmoved(dx, dy)
 end
 
 function love.resize(w, h)
