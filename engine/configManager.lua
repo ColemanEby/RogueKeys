@@ -1,12 +1,15 @@
 -- engine/configManager.lua
 -- Centralized configuration management with file-based persistence
 
--- Add this at the top of the file
 local FileManager = require("modules/util/fileManager")
+local Serialize = require("modules/util/serialize")
 
 
 local ConfigManager = {
     configs = {},
+    -- Configs with pending writes since the last save. set() only marks a
+    -- config dirty instead of saving immediately -- see flush()/saveAllConfigs().
+    dirty = {},
     defaultConfigs = {
         -- Game settings
         game = {
@@ -19,6 +22,29 @@ local ConfigManager = {
             musicVolume = 0.5,
             sfxVolume = 0.8,
             transitionDuration = 0.3
+        },
+
+        -- Audio settings. This is the config Audio (modules/audio/audio.lua)
+        -- actually reads; `game.volume`/`musicVolume`/`sfxVolume` above are
+        -- kept for backwards compatibility but are no longer authoritative.
+        audio = {
+            masterVolume = 1.0,
+            sfxVolume = 0.8,
+            musicVolume = 0.5
+        },
+
+        -- Video / display settings
+        video = {
+            fullscreen = false,
+            scaleMode = "integer",
+            crt = false,
+            vsync = true
+        },
+
+        -- Gameplay settings
+        gameplay = {
+            layout = "qwerty",
+            showKeyboard = true
         },
 
         -- Keyboard layouts
@@ -58,7 +84,8 @@ local ConfigManager = {
             }
         },
 
-        -- Typing challenge difficulties
+        -- Typing challenge difficulties. maxWordSize/timeLimit/baseScorePerChar
+        -- are not read anywhere yet; other units are wiring them up.
         difficulties = {
             easy = {
                 name = "Easy",
@@ -90,7 +117,8 @@ local ConfigManager = {
             roundDifficultyScale = 1.2,
             upgradeBaseCost = 20,
             upgradeMinBonus = 0.05,
-            upgradeMaxBonus = 0.3
+            upgradeMaxBonus = 0.3,
+            baseRequiredScore = 20
         }
     }
 }
@@ -122,27 +150,27 @@ local function mergeTable(target, source)
     return target
 end
 
--- Add this to the init function at the end
 function ConfigManager:init()
     self.configs = deepCopy(self.defaultConfigs)
-    
+    self.dirty = {}
+
     -- Initialize the FileManager
     FileManager.init()
-    
+
     -- Now load configs
     self:loadAllConfigs()
-    
+
     -- If this is the first run, save the default configs
     for configName, _ in pairs(self.defaultConfigs) do
         if not love.filesystem.getInfo("config/" .. configName .. ".lua") then
             self:saveConfig(configName)
         end
     end
-    
+
     print("ConfigManager: Initialization complete")
 end
 
--- Replace the saveConfig function with this version
+-- Save a single config to disk immediately.
 function ConfigManager:saveConfig(configName)
     if not self.configs[configName] then
         print("ConfigManager: No config named '" .. configName .. "' to save")
@@ -151,8 +179,11 @@ function ConfigManager:saveConfig(configName)
 
     local configPath = "config/" .. configName .. ".lua"
 
-    -- Convert config to serialized Lua
-    local serialized = "return " .. self:serializeTable(self.configs[configName])
+    local serialized, err = Serialize.encode(self.configs[configName])
+    if not serialized then
+        print("ConfigManager: Failed to serialize config '" .. configName .. "': " .. tostring(err))
+        return false
+    end
 
     -- Ensure directory exists before trying to save
     if not love.filesystem.getInfo("config") then
@@ -161,17 +192,18 @@ function ConfigManager:saveConfig(configName)
     end
 
     -- Try to save directly
-    local success, err = love.filesystem.write(configPath, serialized)
-    
+    local success = love.filesystem.write(configPath, serialized)
+
     if not success then
-        print("ConfigManager: Direct save failed for '" .. configName .. "': " .. tostring(err))
-        
+        print("ConfigManager: Direct save failed for '" .. configName .. "'")
+
         -- Fall back to using the FileManager
         success = FileManager.saveToFile(configPath, serialized)
     end
-    
+
     if success then
         print("ConfigManager: Saved config '" .. configName .. "'")
+        self.dirty[configName] = nil
         return true
     else
         -- If config saving fails, don't break the game, just log the error
@@ -180,37 +212,29 @@ function ConfigManager:saveConfig(configName)
     end
 end
 
--- Replace the loadConfig function with this version
+-- Load a single config from disk, merging it over the defaults. If the file
+-- is present but fails to parse, this logs the failure, resets that config to
+-- its defaults, and rewrites the file immediately -- a corrupt config used to
+-- stay corrupt forever, since it is only ever (re)written when absent.
 function ConfigManager:loadConfig(configName)
     local configPath = "config/" .. configName .. ".lua"
 
-    -- Load using FileManager
-    local content, error = FileManager.loadFromFile(configPath)
-    
+    local content = FileManager.loadFromFile(configPath)
     if not content then
         print("ConfigManager: Config file '" .. configPath .. "' not found or couldn't be loaded, using defaults")
         return false
     end
 
-    -- Try to load the file as Lua code
-    local func, err = load(content)
-    if not func then
-        print("ConfigManager: Error parsing config file '" .. configPath .. "': " .. tostring(err))
+    local config, err = Serialize.decode(content)
+    if not config then
+        print("ConfigManager: Corrupt config file '" .. configPath .. "' (" .. tostring(err) ..
+            "), resetting to defaults and rewriting")
+        self.configs[configName] = deepCopy(self.defaultConfigs[configName] or {})
+        self:saveConfig(configName)
         return false
     end
 
-    -- Try to execute the chunk to get the config table
-    local success, config = pcall(func)
-    if not success then
-        print("ConfigManager: Error executing config file '" .. configPath .. "': " .. tostring(config))
-        return false
-    end
-
-    -- Merge with defaults to ensure all keys exist
-    if self.configs[configName] == nil then
-        self.configs[configName] = {}
-    end
-
+    -- Merge with defaults to ensure all keys exist (e.g. newly-added settings).
     if self.defaultConfigs[configName] then
         local merged = deepCopy(self.defaultConfigs[configName])
         mergeTable(merged, config)
@@ -223,11 +247,10 @@ function ConfigManager:loadConfig(configName)
     return true
 end
 
--- Replace the loadAllConfigs function with this version
 function ConfigManager:loadAllConfigs()
     -- Ensure config directory exists
     FileManager.ensureDirectoryExists("config")
-    
+
     -- Load all default configs first
     for configName, _ in pairs(self.defaultConfigs) do
         self:loadConfig(configName)
@@ -245,28 +268,42 @@ function ConfigManager:loadAllConfigs()
     end
 end
 
-
--- Save all configs to files
+-- Save every loaded config to disk, regardless of dirty state. Called from
+-- love.quit so nothing pending is lost even if flush() was never called.
 function ConfigManager:saveAllConfigs()
     for configName, _ in pairs(self.configs) do
         self:saveConfig(configName)
     end
 end
 
+-- Save only the configs touched by set() since the last save. Prefer this
+-- over saveAllConfigs() for frequent callers (e.g. a settings screen slider)
+-- so every tweak doesn't force a full disk write.
+function ConfigManager:flush()
+    for configName in pairs(self.dirty) do
+        self:saveConfig(configName)
+    end
+end
+
 -- Get a config value with dot notation path
 function ConfigManager:get(path, default)
+    if type(path) ~= "string" then return default end
+
     local parts = {}
     for part in path:gmatch("[^.]+") do
         table.insert(parts, part)
     end
+    if #parts == 0 then return default end
 
     local current = self.configs
     for i = 1, #parts - 1 do
-        if type(current[parts[i]]) ~= "table" then
+        if type(current) ~= "table" or type(current[parts[i]]) ~= "table" then
             return default
         end
         current = current[parts[i]]
     end
+
+    if type(current) ~= "table" then return default end
 
     local value = current[parts[#parts]]
     if value == nil then
@@ -275,12 +312,16 @@ function ConfigManager:get(path, default)
     return value
 end
 
--- Set a config value with dot notation path
+-- Set a config value with dot notation path. Marks the top-level config dirty
+-- rather than saving immediately -- call flush() or saveAllConfigs() to persist.
 function ConfigManager:set(path, value)
+    if type(path) ~= "string" then return end
+
     local parts = {}
     for part in path:gmatch("[^.]+") do
         table.insert(parts, part)
     end
+    if #parts == 0 then return end
 
     local current = self.configs
     for i = 1, #parts - 1 do
@@ -291,62 +332,29 @@ function ConfigManager:set(path, value)
     end
 
     current[parts[#parts]] = value
-
-    -- Save the affected config
-    self:saveConfig(parts[1])
+    self.dirty[parts[1]] = true
 end
 
--- Get all available keyboard layouts
+-- Get all available keyboard layouts (unordered map of id -> layout data).
 function ConfigManager:getKeyboardLayouts()
     return self.configs.keyboards
+end
+
+-- Get keyboard layout ids in a stable, sorted order. Iterating
+-- getKeyboardLayouts() with pairs() is non-deterministic across runs; callers
+-- that render layout tabs/lists should use this instead.
+function ConfigManager:getKeyboardLayoutIds()
+    local ids = {}
+    for id in pairs(self.configs.keyboards or {}) do
+        ids[#ids + 1] = id
+    end
+    table.sort(ids)
+    return ids
 end
 
 -- Get difficulty settings
 function ConfigManager:getDifficulty(level)
     return self.configs.difficulties[level] or self.configs.difficulties.medium
 end
-
--- Serialize a table to a string (with some formatting for readability)
-function ConfigManager:serializeTable(tbl, indent)
-    if not indent then indent = 0 end
-    local result = "{\n"
-
-    for k, v in pairs(tbl) do
-        result = result .. string.rep("    ", indent + 1)
-
-        -- Handle the key
-        if type(k) == "number" then
-            -- Array index
-            result = result .. ""
-        elseif type(k) == "string" then
-            -- String key needs quotes if not a valid identifier
-            if k:match("^[%a_][%w_]*$") then
-                result = result .. k .. " = "
-            else
-                result = result .. "[\"" .. k .. "\"] = "
-            end
-        else
-            -- Other key types in brackets
-            result = result .. "[" .. tostring(k) .. "] = "
-        end
-
-        -- Handle the value
-        if type(v) == "table" then
-            result = result .. self:serializeTable(v, indent + 1)
-        elseif type(v) == "string" then
-            result = result .. "\"" .. v .. "\""
-        else
-            result = result .. tostring(v)
-        end
-
-        result = result .. ",\n"
-    end
-
-    -- Close the table
-    result = result .. string.rep("    ", indent) .. "}"
-    return result
-end
-
-
 
 return ConfigManager
