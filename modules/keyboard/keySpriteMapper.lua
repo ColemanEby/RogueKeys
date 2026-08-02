@@ -60,11 +60,20 @@ end
 function KeySpriteMapper:load()
     if self.loaded then return true end
 
-    -- Get sprite sheet from resource manager (should be loaded during initialization)
-    self.sheet = ResourceManager:getSprite("keyboard_sprites")
+    -- Quad creation needs a real graphics context; a headless run has none.
+    if _G.HEADLESS or not love.graphics then
+        return false
+    end
+
+    -- getSpriteOrNil, not getSprite: the latter substitutes a magenta
+    -- placeholder for a missing asset, which would sail past the nil check
+    -- below and slice quads out of a checkerboard.
+    self.sheet = ResourceManager:getSpriteOrNil("keyboard_sprites")
 
     if not self.sheet then
-        print("KeySpriteMapper: Failed to load keyboard sprite sheet")
+        if _G.DEBUG_MODE then
+            print("KeySpriteMapper: keyboard sprite sheet unavailable, using generated caps")
+        end
         return false
     end
 
