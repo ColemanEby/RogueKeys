@@ -286,6 +286,9 @@ end
 -- pushed that canvas already), otherwise covers the real window.
 function StateManager.drawTransition()
     if transitionAlpha <= 0 then return end
+    -- Headless test runs deliberately have no window; calling LÖVE's drawing
+    -- functions in that configuration is unsafe, but state draw() should still run.
+    if rawget(_G, "HEADLESS") then return end
 
     local w, h
     if StateManager.current and StateManager.current.logical and Screen.isReady() then
