@@ -149,16 +149,16 @@ function love.load()
     local loaded, menuState = pcall(require, "states/menuState")
     if loaded and menuState then
         StateManager.stateCache["menuState"] = StateManager.createState(menuState)
-        StateManager.switch("menuState")
+        StateManager.switchImmediate("menuState")
     else
         print("Failed to load menuState, using fallback: " .. tostring(menuState))
-        StateManager.switch("fallbackMenuState")
+        StateManager.switchImmediate("fallbackMenuState")
     end
 
     parseShotArgs()
     if shotState then
         print("[Screenshot mode] target state: " .. shotState)
-        local ok, err = pcall(StateManager.switch, shotState)
+        local ok, err = pcall(StateManager.switchImmediate, shotState)
         if not ok then
             print("SHOT ERROR: could not switch to '" .. shotState .. "': " .. tostring(err))
             love.event.quit(1)

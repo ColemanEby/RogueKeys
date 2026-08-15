@@ -1,0 +1,6 @@
+# cc-orch per-repo autonomy policy — see /data/code/cc-orch/ROADMAP.md
+tier: standard
+push: branch
+verify: cross-review
+max_items: 2
+goals: GOALS.md
