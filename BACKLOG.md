@@ -15,6 +15,68 @@ verifiable, plus doc sync.
 
 ## Open
 
+- [ ] Wire the first batch of achievement triggers from `docs/ACHIEVEMENTS.md`
+  — the spec lists 24 achievements with exact trigger sites, `Steam.unlockAchievement`
+  (modules/steam/steam.lua:72) is idempotent and safe headless, yet as of
+  2026-08-16 zero gameplay modules call it (the only callers are
+  tests/test_steam.lua). Start with the stat-threshold group whose sites already
+  exist: `FIRST_KEYSTROKE` and `STREAK_50`/`STREAK_200` in
+  `modules/typing/trainer.lua`, and `PERFECT_ROUND`, `FIVE_PERFECT_ROUNDS`,
+  `WPM_60`/`WPM_100`/`WPM_150`, `ACCURACY_SURGEON` at the stat-commit sites in
+  `modules/player/playerModel.lua` (spec rows 25, 30-37 name each site); add
+  cases to `tests/test_steam.lua` exercising each trigger through the real stat
+  pipeline.
+  - files: modules/typing/trainer.lua, modules/player/playerModel.lua,
+    tests/test_steam.lua, docs/ACHIEVEMENTS.md (reference only)
+  - acceptance: `cd /data/code/RogueKeys && grep -rn "unlockAchievement" modules/typing/trainer.lua modules/player/playerModel.lua | wc -l` prints >= 6;
+    `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED` and a count > 294
+  - source: audit
+- [ ] Add `tools/build.sh` producing `dist/RogueKeys.love` (zip of main.lua,
+  conf.lua, engine/, modules/, states/, lib/, data/, resources/, tests/ —
+  tests/ kept so the acceptance run below works; exclude tools/, docs/, .github/)
+  — the only build path today is Windows-only `tools/build.ps1`, so there is
+  no way to package a build from this Linux box or from CI, and
+  `docs/STEAM_CHECKLIST.md` step 0 depends on a runnable build. Optionally add
+  an artifact-upload step to `.github/workflows/ci.yml`.
+  - files: tools/build.sh, .github/workflows/ci.yml (optional)
+  - acceptance: `cd /data/code/RogueKeys && bash tools/build.sh` exits 0;
+    `unzip -l /data/code/RogueKeys/dist/RogueKeys.love | grep -c "main.lua"` prints >= 1;
+    `cd /data/code/RogueKeys && timeout 120 env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love dist/RogueKeys.love --test` ends with `ALL TESTS PASSED`
+  - source: hygiene
+- [ ] Sync `steammvproadmap.md` sections 4–5 with reality, matching the Phase 0
+  DONE-annotation style: Phase 1 items 1 (virtual 640×360 canvas —
+  `modules/ui/screen.lua`, all 10 opt-in states converted), 2 (theme —
+  `modules/ui/theme.lua` + `tests/test_theme.lua`), and 5 (state fades —
+  `engine/stateManager.lua` + `tests/test_state_manager.lua`) are implemented,
+  as is Phase 2's layered 32px keycap rendering (`modules/keyboard/capRenderer.lua`,
+  `keyboardView.lua`). Doc-only change citing the satisfying file per item.
+  - files: steammvproadmap.md
+  - acceptance: `grep -c "DONE" /data/code/RogueKeys/steammvproadmap.md` prints >= 11 (currently 7);
+    `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED`
+  - source: audit
+- [ ] Migrate the last two hardcoded `love.graphics.setColor(<numeric>)` calls
+  in `engine/stateManager.lua` (line 300: fade overlay `(0, 0, 0, transitionAlpha)`;
+  line 326: pause dim `(0, 0, 0, 0.55)`) to `modules/ui/theme.lua` references —
+  the theme sweep is otherwise complete (states/ and modules/ are clean as of
+  2026-08-16), so this finishes it.
+  - files: engine/stateManager.lua, modules/ui/theme.lua
+  - acceptance: `cd /data/code/RogueKeys && grep -rn "setColor(0" states/ modules/ engine/ | grep -v theme` prints nothing;
+    `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED`
+  - source: lint
+- [ ] Remove the legacy 16px sprite mapper `modules/keyboard/keySpriteMapper.lua`
+  — the 32px `capRenderer.lua`/`keyboardView.lua` path replaced it in game
+  code; its only remaining consumers are `tests/test_keycaps.lua` and
+  `tests/test_integration.lua` (confirmed 2026-08-16). Delete the module, drop
+  or port the test cases that exercise it, and remove any 16px sheet in
+  `resources/sprites/` it exclusively references (verify
+  `keyboard_letters_and_symbols.png` / `keyboard_extras.png` usage before
+  deleting).
+  - files: modules/keyboard/keySpriteMapper.lua, tests/test_keycaps.lua,
+    tests/test_integration.lua, resources/sprites/
+  - acceptance: `cd /data/code/RogueKeys && grep -rn "keySpriteMapper" --include="*.lua" .` prints nothing;
+    `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED`
+  - source: hygiene
+
 - [!] blocked: needs human (commits the operator's own uncommitted WIP; dispatch runs in an isolated worktree that cannot see it, and unreviewed operator work must not be auto-committed) (2026-08-15) Clean up working tree. Review the uncommitted changes in this repo, group them into logical commits with clear messages, do not push, and flag anything that needs operator judgment in the commit body (queued from hub, 2026-08-14)
 - [x] Sync `steammvproadmap.md` with reality: Phase 0 items already implemented (done 2026-08-10, copilot, ledger #211 + fix round #213; codex cross-review #212)
   (setup.lua removed, serializers replaced, DEBUG_MODE unified, test harness with
