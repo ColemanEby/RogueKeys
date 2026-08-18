@@ -6,6 +6,8 @@
 
 local H = require("tests/helpers")
 local Steam = require("modules/steam/steam")
+local TypingTrainer = require("modules/typing/trainer")
+local PlayerModel = require("modules/player/playerModel")
 
 local T = {}
 
@@ -37,6 +39,91 @@ function T.repeated_unlocks_of_the_same_achievement_are_cheap_and_safe()
     for _ = 1, 5 do
         H.succeeds(function() Steam.unlockAchievement("PERFECT_ROUND") end)
     end
+end
+
+-- Stat-threshold achievement triggers --------------------------------------
+
+function T.first_correct_keystroke_unlocks_first_keystroke()
+    Steam.shutdown()
+    local trainer = TypingTrainer.new({ text = "ab" })
+    trainer:handleInput("a")
+    H.isTrue(Steam.isAchievementSent("FIRST_KEYSTROKE"))
+end
+
+function T.streak_of_50_unlocks_in_the_zone()
+    Steam.shutdown()
+    local trainer = TypingTrainer.new({ text = string.rep("a", 50) })
+    for i = 1, 50 do
+        trainer:handleInput("a")
+    end
+    H.isTrue(Steam.isAchievementSent("STREAK_50"))
+    H.isFalse(Steam.isAchievementSent("STREAK_200"))
+end
+
+function T.streak_of_200_unlocks_unbroken()
+    Steam.shutdown()
+    local trainer = TypingTrainer.new({ text = string.rep("a", 200) })
+    for i = 1, 200 do
+        trainer:handleInput("a")
+    end
+    H.isTrue(Steam.isAchievementSent("STREAK_200"))
+end
+
+function T.perfect_round_unlocks_flawless()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player:startSession()
+    player:endSession({ keystrokes = 10, mistakes = 0, correct = 10, accuracy = 100, wpm = 0 })
+    H.isTrue(Steam.isAchievementSent("PERFECT_ROUND"))
+    H.isFalse(Steam.isAchievementSent("FIVE_PERFECT_ROUNDS"))
+end
+
+function T.five_perfect_rounds_unlocks_precision_machine()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    for i = 1, 5 do
+        player:startSession()
+        player:endSession({ keystrokes = 10, mistakes = 0, correct = 10, accuracy = 100, wpm = 0 })
+    end
+    H.isTrue(Steam.isAchievementSent("PERFECT_ROUND"))
+    H.isTrue(Steam.isAchievementSent("FIVE_PERFECT_ROUNDS"))
+end
+
+function T.wpm_60_unlocks_speed_typer()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player:startSession()
+    player:endSession({ keystrokes = 60, mistakes = 0, correct = 60, accuracy = 100, wpm = 60 })
+    H.isTrue(Steam.isAchievementSent("WPM_60"))
+    H.isFalse(Steam.isAchievementSent("WPM_100"))
+end
+
+function T.wpm_100_unlocks_triple_digit()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player:startSession()
+    player:endSession({ keystrokes = 100, mistakes = 0, correct = 100, accuracy = 100, wpm = 100 })
+    H.isTrue(Steam.isAchievementSent("WPM_60"))
+    H.isTrue(Steam.isAchievementSent("WPM_100"))
+    H.isFalse(Steam.isAchievementSent("WPM_150"))
+end
+
+function T.wpm_150_unlocks_inhuman()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player:startSession()
+    player:endSession({ keystrokes = 150, mistakes = 0, correct = 150, accuracy = 100, wpm = 150 })
+    H.isTrue(Steam.isAchievementSent("WPM_60"))
+    H.isTrue(Steam.isAchievementSent("WPM_100"))
+    H.isTrue(Steam.isAchievementSent("WPM_150"))
+end
+
+function T.perfect_accuracy_over_100_keystrokes_unlocks_accuracy_surgeon()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player:startSession()
+    player:endSession({ keystrokes = 100, mistakes = 0, correct = 100, accuracy = 100, wpm = 0 })
+    H.isTrue(Steam.isAchievementSent("ACCURACY_SURGEON"))
 end
 
 return T

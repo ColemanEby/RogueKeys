@@ -7,6 +7,7 @@
 
 local Theme = require("modules/ui/theme")
 local Audio = require("modules/audio/audio")
+local Steam = require("modules/steam/steam")
 
 local TypingTrainer = {}
 TypingTrainer.__index = TypingTrainer
@@ -219,9 +220,18 @@ function TypingTrainer:handleInput(char)
     local points, procs = 0, {}
 
     if isCorrect then
+        if self.correctCount == 0 then
+            Steam.unlockAchievement("FIRST_KEYSTROKE")
+        end
+
         self.currentStreak = self.currentStreak + 1
         if self.currentStreak > self.longestStreak then
             self.longestStreak = self.currentStreak
+            if self.longestStreak == 50 then
+                Steam.unlockAchievement("STREAK_50")
+            elseif self.longestStreak == 200 then
+                Steam.unlockAchievement("STREAK_200")
+            end
         end
 
         points, procs = self:scoreKeystroke(char)

@@ -5,6 +5,7 @@ local FileManager = require("modules/util/fileManager")
 local ConfigManager = require("engine/configManager")
 local KeyboardModel = require("modules/keyboard/keyboardModel")
 local Serialize = require("modules/util/serialize")
+local Steam = require("modules/steam/steam")
 
 local PlayerModel = {}
 PlayerModel.__index = PlayerModel
@@ -238,7 +239,18 @@ function PlayerModel:endSession(sessionStats)
         bumpMax(self.stats, "bestAPM", sessionStats.apm)
 
         if sessionStats.wpm then matchData.wpm = sessionStats.wpm end
+        local oldBestWPM = self.stats.bestWPM or 0
         bumpMax(self.stats, "bestWPM", sessionStats.wpm)
+        local newBestWPM = self.stats.bestWPM or 0
+        if oldBestWPM < 60 and newBestWPM >= 60 then
+            Steam.unlockAchievement("WPM_60")
+        end
+        if oldBestWPM < 100 and newBestWPM >= 100 then
+            Steam.unlockAchievement("WPM_100")
+        end
+        if oldBestWPM < 150 and newBestWPM >= 150 then
+            Steam.unlockAchievement("WPM_150")
+        end
 
         if sessionStats.accuracy then matchData.accuracy = sessionStats.accuracy end
         bumpMax(self.stats, "bestAccuracy", sessionStats.accuracy)
@@ -250,10 +262,19 @@ function PlayerModel:endSession(sessionStats)
             self.runStats.score = (self.runStats.score or 0) + sessionStats.score
         end
 
+        -- Accuracy surgeon: 100% accuracy over 100+ keystrokes in one round.
+        if sessionStats.accuracy == 100 and (sessionStats.keystrokes or 0) >= 100 then
+            Steam.unlockAchievement("ACCURACY_SURGEON")
+        end
+
         -- Perfect round: no mistakes across at least one keystroke.
         if sessionStats.mistakes == 0 and (sessionStats.keystrokes or 0) > 0 then
             self.stats.roundsWithoutError = (self.stats.roundsWithoutError or 0) + 1
             self.stats.perfectRounds = (self.stats.perfectRounds or 0) + 1
+            Steam.unlockAchievement("PERFECT_ROUND")
+            if self.stats.perfectRounds >= 5 then
+                Steam.unlockAchievement("FIVE_PERFECT_ROUNDS")
+            end
         end
 
         if type(sessionStats.moneyEarned) == "number" then
@@ -270,6 +291,7 @@ function PlayerModel:endSession(sessionStats)
         print("PlayerModel: Warning - No session stats provided")
     end
 
+    Steam.store()
     self:markDirty()
     return true
 end
