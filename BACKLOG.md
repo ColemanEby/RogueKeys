@@ -15,7 +15,7 @@ verifiable, plus doc sync.
 
 ## Open
 
-- [ ] Wire the first batch of achievement triggers from `docs/ACHIEVEMENTS.md`
+- [x] Wire the first batch of achievement triggers from `docs/ACHIEVEMENTS.md` (done 2026-08-18, copilot, ledger #448; commit 800bb6f; cross-review opencode #449 APPROVE; 9 triggers wired, suite 294 -> 303; first codex attempt #447 produced no diff — stopped to ask for design approval)
   — the spec lists 24 achievements with exact trigger sites, `Steam.unlockAchievement`
   (modules/steam/steam.lua:72) is idempotent and safe headless, yet as of
   2026-08-16 zero gameplay modules call it (the only callers are
