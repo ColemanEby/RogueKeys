@@ -91,7 +91,9 @@ local function runTests()
         ConfigManager:init()
     end)
     if not ok then
-        print("WARNING: test bootstrap failed: " .. tostring(err))
+        print("ERROR: test bootstrap failed: " .. tostring(err))
+        love.event.quit(1)
+        return
     end
 
     local Runner = require("tests/run")
