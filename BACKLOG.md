@@ -15,6 +15,8 @@ verifiable, plus doc sync.
 
 ## Open
 
+- [x] Delete the dead `modules/util/statTrackingIntegration.lua` and `modules/util/statVerifier.lua` (promoted from PROPOSED.md, 2026-08-18; NOTE: the promoted line was truncated — full spec in PROPOSED.md) (done 2026-08-18, copilot, ledger #454; commit c9719c6; cross-review opencode #455 APPROVE, no findings; suite 303 -> 302, the dropped test asserted only the deleted module)
+- [x] Make a failed test bootstrap fail the run. `runTests()` in `main.lua:86-101` (promoted from PROPOSED.md, 2026-08-18) (done 2026-08-18, codex, ledger #460; commit e16eabf; cross-review opencode #461 APPROVE; bootstrap failure now prints ERROR + love.event.quit(1) and skips the suite; 302 tests still green)
 - [x] Wire the first batch of achievement triggers from `docs/ACHIEVEMENTS.md` (done 2026-08-18, copilot, ledger #448; commit 800bb6f; cross-review opencode #449 APPROVE; 9 triggers wired, suite 294 -> 303; first codex attempt #447 produced no diff — stopped to ask for design approval)
   — the spec lists 24 achievements with exact trigger sites, `Steam.unlockAchievement`
   (modules/steam/steam.lua:72) is idempotent and safe headless, yet as of
