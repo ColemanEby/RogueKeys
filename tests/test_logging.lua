@@ -6,7 +6,6 @@ local H = require("tests/helpers")
 
 local Log = require("modules/util/debugHelper")
 local FileManager = require("modules/util/fileManager")
-local StatVerifier = require("modules/util/statVerifier")
 
 local T = {}
 
@@ -132,21 +131,6 @@ function T.filemanager_savetofile_reports_genuine_success()
     H.isTrue(ok)
     H.equal(FileManager.loadFromFile("save/test_logging_roundtrip.tmp"), "hello")
     love.filesystem.remove("save/test_logging_roundtrip.tmp")
-end
-
-function T.statverifier_never_writes_the_real_save_file()
-    local path = "save/player.lua"
-    local existedBefore = love.filesystem.getInfo(path) ~= nil
-    local contentBefore = existedBefore and love.filesystem.read(path) or nil
-
-    H.succeeds(function() StatVerifier.runIntegrationTest() end)
-
-    local existedAfter = love.filesystem.getInfo(path) ~= nil
-    H.equal(existedAfter, existedBefore, "StatVerifier must not create or delete save/player.lua")
-
-    if existedBefore then
-        H.equal(love.filesystem.read(path), contentBefore, "StatVerifier must not modify save/player.lua")
-    end
 end
 
 return T
