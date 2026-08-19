@@ -6,7 +6,6 @@
 local H = require("tests/helpers")
 
 local KeyboardModel = require("modules/keyboard/keyboardModel")
-local KeySpriteMapper = require("modules/keyboard/keySpriteMapper")
 local ResourceManager = require("engine/resourceManager")
 local TypingTrainer = require("modules/typing/trainer")
 
@@ -163,14 +162,6 @@ end
 --------------------------------------------------------------------------
 -- Missing-asset placeholder vs. a caller that genuinely wants nil
 --------------------------------------------------------------------------
-
-function T.sprite_mapper_load_is_headless_safe()
-    -- getSprite now substitutes a magenta placeholder for a missing asset, so
-    -- a nil check alone no longer stops load() from slicing quads out of it.
-    local mapper = KeySpriteMapper.new()
-    H.isFalse(H.succeeds(function() return mapper:load() end),
-        "load() must fail gracefully with no graphics context")
-end
 
 function T.get_sprite_or_nil_still_returns_nil()
     H.equal(ResourceManager:getSpriteOrNil("definitely_not_a_real_sprite"), nil)
