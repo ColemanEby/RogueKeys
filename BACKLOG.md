@@ -56,7 +56,7 @@ verifiable, plus doc sync.
   - acceptance: `grep -c "DONE" /data/code/RogueKeys/steammvproadmap.md` prints >= 11 (currently 7);
     `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED`
   - source: audit
-- [ ] Migrate the last two hardcoded `love.graphics.setColor(<numeric>)` calls
+- [x] Migrate the last two hardcoded `love.graphics.setColor(<numeric>)` calls (done 2026-08-19, opencode, ledger #469; commit 071b27d; codex cross-review #470 APPROVE; suite 302 -> 304; first codex attempt #468 produced no diff — asked for design approval, cf. #447)
   in `engine/stateManager.lua` (line 300: fade overlay `(0, 0, 0, transitionAlpha)`;
   line 326: pause dim `(0, 0, 0, 0.55)`) to `modules/ui/theme.lua` references —
   the theme sweep is otherwise complete (states/ and modules/ are clean as of
