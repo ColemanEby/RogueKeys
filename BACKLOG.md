@@ -45,7 +45,7 @@ verifiable, plus doc sync.
     `unzip -l /data/code/RogueKeys/dist/RogueKeys.love | grep -c "main.lua"` prints >= 1;
     `cd /data/code/RogueKeys && timeout 120 env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love dist/RogueKeys.love --test` ends with `ALL TESTS PASSED`
   - source: hygiene
-- [ ] Sync `steammvproadmap.md` sections 4–5 with reality, matching the Phase 0
+- [x] Sync `steammvproadmap.md` sections 4–5 with reality (done 2026-08-19, codex, ledger #464; commit 3bfd416; opencode cross-review #465 APPROVE; DONE count 7 -> 11, 302 tests green), matching the Phase 0
   DONE-annotation style: Phase 1 items 1 (virtual 640×360 canvas —
   `modules/ui/screen.lua`, all 10 opt-in states converted), 2 (theme —
   `modules/ui/theme.lua` + `tests/test_theme.lua`), and 5 (state fades —
