@@ -33,7 +33,7 @@ verifiable, plus doc sync.
   - acceptance: `cd /data/code/RogueKeys && grep -rn "unlockAchievement" modules/typing/trainer.lua modules/player/playerModel.lua | wc -l` prints >= 6;
     `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED` and a count > 294
   - source: audit
-- [ ] Add `tools/build.sh` producing `dist/RogueKeys.love` (zip of main.lua,
+- [x] Add `tools/build.sh` producing `dist/RogueKeys.love` (done 2026-08-19, codex, ledger #462) (zip of main.lua,
   conf.lua, engine/, modules/, states/, lib/, data/, resources/, tests/ —
   tests/ kept so the acceptance run below works; exclude tools/, docs/, .github/)
   — the only build path today is Windows-only `tools/build.ps1`, so there is
