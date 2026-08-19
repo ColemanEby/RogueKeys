@@ -49,6 +49,11 @@ Theme.palette = {
     wrong      = hex("#e05a5a"),
     caret      = hex("#ffc94a"),
     ghost      = hex("#3a3a4e"),
+
+    -- Full-screen overlays: the state-transition fade (alpha animated at draw
+    -- time via the alpha argument) and the pause-menu underlay dim.
+    overlayFade = hex("#000000"),
+    overlayDim  = hex("#000000", 0.55),
 }
 
 -- Rarity is a first-class visual language: cap color, price tier and glow all

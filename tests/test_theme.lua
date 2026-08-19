@@ -16,6 +16,7 @@ function T.palette_contains_all_expected_keys()
         "text", "textMuted", "textDim", "accent", "accentDark",
         "success", "error", "warning", "info",
         "typed", "pending", "wrong", "caret", "ghost",
+        "overlayFade", "overlayDim",
     }
     H.hasKeys(Theme.palette, expected)
 end
@@ -29,6 +30,24 @@ function T.palette_values_are_four_floats_in_unit_range()
             H.between(color[i], 0, 1, "palette[" .. name .. "][" .. i .. "] out of range")
         end
     end
+end
+
+-- Full-screen overlay colors
+
+function T.overlay_colors_are_pure_black_with_expected_alpha()
+    local fade = Theme.palette.overlayFade
+    H.deepEqual({ fade[1], fade[2], fade[3] }, { 0, 0, 0 }, "overlayFade must be pure black")
+    H.equal(fade[4], 1, "overlayFade defaults to opaque")
+
+    local dim = Theme.palette.overlayDim
+    H.deepEqual({ dim[1], dim[2], dim[3] }, { 0, 0, 0 }, "overlayDim must be pure black")
+    H.near(dim[4], 0.55, 1e-9, "overlayDim alpha must be 0.55")
+end
+
+function T.overlay_fade_alpha_is_overridable()
+    local c = Theme.color("overlayFade", 0.3)
+    H.deepEqual({ c[1], c[2], c[3] }, { 0, 0, 0 }, "overlayFade stays black when alpha overridden")
+    H.near(c[4], 0.3, 1e-9, "overlayFade alpha must be overridden by the argument")
 end
 
 -- ---------------------------------------------------------------------------
