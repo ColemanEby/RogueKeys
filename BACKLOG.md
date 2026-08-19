@@ -65,7 +65,7 @@ verifiable, plus doc sync.
   - acceptance: `cd /data/code/RogueKeys && grep -rn "setColor(0" states/ modules/ engine/ | grep -v theme` prints nothing;
     `cd /data/code/RogueKeys && SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy love . --test` ends with `ALL TESTS PASSED`
   - source: lint
-- [ ] Remove the legacy 16px sprite mapper `modules/keyboard/keySpriteMapper.lua`
+- [x] Remove the legacy 16px sprite mapper `modules/keyboard/keySpriteMapper.lua` (done 2026-08-19, opencode, ledger #471; commit 60d424b; codex cross-review #472 APPROVE; suite 304 -> 298, 0 failed; both 16px sheets and the dead resourceManager load block removed; README.md:81 still lists the deleted PNG — doc-only leftover for the operator)
   — the 32px `capRenderer.lua`/`keyboardView.lua` path replaced it in game
   code; its only remaining consumers are `tests/test_keycaps.lua` and
   `tests/test_integration.lua` (confirmed 2026-08-16). Delete the module, drop
