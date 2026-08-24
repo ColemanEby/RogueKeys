@@ -18,12 +18,34 @@ jobs:
       # LOVE 11.5 pinned to match conf.lua's t.version. AppImages need FUSE to
       # run directly, which GitHub's runners don't ship with, so extract it
       # instead of executing it in place.
-      - name: Install LOVE 11.5
+      - name: Cache LOVE 11.5
+        id: love-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            love-11.5-x86_64.AppImage
+            squashfs-root
+          key: love-${{ runner.os }}-11.5-x86_64
+
+      - name: Download LOVE 11.5
+        if: steps.love-cache.outputs.cache-hit != 'true'
         run: |
-          curl -fL -o love.AppImage \
+          curl -fL -o love-11.5-x86_64.AppImage \
             https://github.com/love2d/love/releases/download/11.5/love-11.5-x86_64.AppImage
-          chmod +x love.AppImage
-          ./love.AppImage --appimage-extract
+
+      # Re-verify cache hits because a restored cache is not trusted input.
+      - name: Verify LOVE 11.5
+        run: |
+          echo "65a673406431eff7167a15a032bf7a2e4ba50108e091eb7b176465831f9b5e00  love-11.5-x86_64.AppImage" | sha256sum -c -
+
+      - name: Extract LOVE 11.5
+        if: steps.love-cache.outputs.cache-hit != 'true'
+        run: |
+          chmod +x love-11.5-x86_64.AppImage
+          ./love-11.5-x86_64.AppImage --appimage-extract
+
+      - name: Ensure LOVE is executable
+        run: chmod +x squashfs-root/bin/love
 
       # conf.lua sets t.window = false under --test, so no display should be
       # required, but the LOVE binary still touches SDL's video init on the

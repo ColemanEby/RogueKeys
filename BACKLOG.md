@@ -15,6 +15,16 @@ verifiable, plus doc sync.
 
 ## Open
 
+- [x] Harden the CI LOVE download — `.github/workflows/ci.yml` fetches the (promoted from PROPOSED.md, 2026-08-23) (done 2026-08-24, codex, ledger #524 + fix round #526; copilot cross-review #525 REQUEST_CHANGES — the hash check sat inside the cache-miss guard so a restored cache was never verified, and a cache restore that dropped the mode bit would fail the test step; the fix round caches the AppImage alongside squashfs-root, verifies the SHA-256 on every run, extracts only on a miss and chmods the binary unconditionally; the sweeper computed the pinned hash 65a67340...5e00 itself from a real download of the URL in the workflow, so the value in CI is verified, not asserted; yamllint clean, suite still 298 green)
+- [ ] Build the procedural starfield background — roadmap Phase 1 item 6 (promoted from PROPOSED.md, 2026-08-23)
+- [ ] Add per-offer lock to the shop — the last unbuilt piece of roadmap Phase 3 (promoted from PROPOSED.md, 2026-08-23)
+- [ ] Wire the fifth and final achievement batch, closing `docs/ACHIEVEMENTS.md` (promoted from PROPOSED.md, 2026-08-23)
+- [ ] Wire the fourth achievement batch — the boss/mutator round-clear group, (promoted from PROPOSED.md, 2026-08-23)
+- [ ] Wire the third achievement batch — the item/rarity group: (promoted from PROPOSED.md, 2026-08-22)
+- [ ] Sync the docs with reality: (a) annotate `steammvproadmap.md` sections (promoted from PROPOSED.md, 2026-08-22)
+- [ ] Add a packaging job to `.github/workflows/ci.yml` that runs (promoted from PROPOSED.md, 2026-08-22)
+- [ ] Smoke-test `states/fallbackMenuState.lua` — it is the only one of the 11 (promoted from PROPOSED.md, 2026-08-22)
+- [ ] Wire the second achievement batch — the run/economy lifecycle group from (promoted from PROPOSED.md, 2026-08-22)
 - [x] Delete the dead `modules/util/statTrackingIntegration.lua` and `modules/util/statVerifier.lua` (promoted from PROPOSED.md, 2026-08-18; NOTE: the promoted line was truncated — full spec in PROPOSED.md) (done 2026-08-18, copilot, ledger #454; commit c9719c6; cross-review opencode #455 APPROVE, no findings; suite 303 -> 302, the dropped test asserted only the deleted module)
 - [x] Make a failed test bootstrap fail the run. `runTests()` in `main.lua:86-101` (promoted from PROPOSED.md, 2026-08-18) (done 2026-08-18, codex, ledger #460; commit e16eabf; cross-review opencode #461 APPROVE; bootstrap failure now prints ERROR + love.event.quit(1) and skips the suite; 302 tests still green)
 - [x] Wire the first batch of achievement triggers from `docs/ACHIEVEMENTS.md` (done 2026-08-18, copilot, ledger #448; commit 800bb6f; cross-review opencode #449 APPROVE; 9 triggers wired, suite 294 -> 303; first codex attempt #447 produced no diff — stopped to ask for design approval)
