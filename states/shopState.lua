@@ -108,6 +108,35 @@ local function removeOfferById(list, id)
     return result
 end
 
+-- Per-offer lock helpers. Locks live directly on the offer table and are
+-- cleared at the same per-visit reset that zeroes rerollIndex.
+local function toggleOfferLock(list, index)
+    local offer = list[index]
+    if not offer then return end
+    offer.locked = not offer.locked
+end
+
+local function clearOfferLocks(list)
+    for _, o in ipairs(list or {}) do
+        o.locked = nil
+    end
+end
+
+-- Carry locked offers through a reroll at their exact board index; fresh
+-- offers fill every unlocked slot. The caller has already charged the cost.
+local function mergeRerollOffers(current, fresh)
+    local merged = {}
+    local n = math.max(#current, #fresh)
+    for i = 1, n do
+        if current[i] and current[i].locked then
+            merged[i] = current[i]
+        else
+            merged[i] = fresh[i]
+        end
+    end
+    return merged
+end
+
 local function sortedLayoutIds(layouts)
     local ids, seen = {}, {}
     for _, id in ipairs(PREFERRED_LAYOUT_ORDER) do
@@ -249,7 +278,7 @@ local function performReroll()
     if not player:spendMoney(cost) then return end
 
     rerollIndex = rerollIndex + 1
-    offers = generateOffers(player.keyboard)
+    offers = mergeRerollOffers(offers, generateOffers(player.keyboard))
     selectedIndex = 1
     hoveredIndex, previewIndex = nil, nil
 end
@@ -300,13 +329,21 @@ local function computeLayout()
     layout.rerollButton = { x = W - 90, y = HEADER_H + 2, w = 82, h = TAB_H }
 
     layout.cards = {}
+    layout.lockRects = {}
     if #offers > 0 then
         local totalW = #offers * CARD_W + (#offers - 1) * CARD_GAP
         local startX = (W - totalW) / 2
         for i = 1, #offers do
+            local cardX = startX + (i - 1) * (CARD_W + CARD_GAP)
             layout.cards[i] = {
-                x = startX + (i - 1) * (CARD_W + CARD_GAP),
+                x = cardX,
                 y = CARD_Y, w = CARD_W, h = CARD_H,
+            }
+            layout.lockRects[i] = {
+                x = cardX + CARD_W - 16,
+                y = CARD_Y + 6,
+                w = 12,
+                h = 12,
             }
         end
     end
@@ -386,18 +423,33 @@ local function drawTabs(layout)
     end
 end
 
-local function drawCard(rect, item, isHovered, isSelected, canAfford)
+local function drawCard(rect, item, isHovered, isSelected, canAfford, lockRect)
     local rarity = item.rarity or "common"
+    local locked = item.locked
 
     Theme.setColor("panel")
     love.graphics.rectangle("fill", rect.x, rect.y, rect.w, rect.h)
 
-    Theme.setColor((isHovered or isSelected) and "borderLight" or "border")
+    local borderColor = locked and "accent" or ((isHovered or isSelected) and "borderLight" or "border")
+    Theme.setColor(borderColor)
     love.graphics.rectangle("line", rect.x, rect.y, rect.w, rect.h)
 
     -- Rarity strip: the cheapest signal a player reads at a glance.
     Theme.setColor("rarity." .. rarity)
     love.graphics.rectangle("fill", rect.x, rect.y, rect.w, 4)
+
+    -- Lock badge in the upper-right corner.
+    if lockRect then
+        Theme.setColor(locked and "accent" or "textDim")
+        love.graphics.rectangle("fill", lockRect.x, lockRect.y, lockRect.w, lockRect.h)
+        Theme.setColor("base")
+        love.graphics.rectangle("line", lockRect.x, lockRect.y, lockRect.w, lockRect.h)
+        if locked then
+            love.graphics.setFont(Theme.font("small"))
+            Theme.setColor("base")
+            love.graphics.printf("L", lockRect.x, lockRect.y + 1, lockRect.w, "center")
+        end
+    end
 
     -- Placeholder keycap art: a plain cap with the switch color peeking under
     -- it, ready to be swapped for real cap art when it drops in.
@@ -449,7 +501,8 @@ local function drawCards(layout, player)
     end
 
     for i, item in ipairs(offers) do
-        drawCard(layout.cards[i], item, hoveredIndex == i, selectedIndex == i, player.totalMoney >= (item.cost or 0))
+        drawCard(layout.cards[i], item, hoveredIndex == i, selectedIndex == i,
+            player.totalMoney >= (item.cost or 0), layout.lockRects[i])
     end
 end
 
@@ -534,6 +587,7 @@ end
 local function resetState()
     shopSection = "upgrades"
     rerollIndex = 0
+    clearOfferLocks(offers)
     pendingLayoutChange = nil
     selectedIndex = 1
     hoveredIndex = nil
@@ -632,6 +686,8 @@ function ShopState.keypressed(key)
             purchaseOffer(selectedIndex)
         elseif key == "r" then
             performReroll()
+        elseif key == "l" then
+            toggleOfferLock(offers, hoveredIndex or selectedIndex)
         end
     else
         if key == "up" then
@@ -666,6 +722,13 @@ function ShopState.mousepressed(x, y, button)
         if pointInRect(x, y, layout.rerollButton) then
             performReroll()
             return
+        end
+        for i, rect in ipairs(layout.lockRects) do
+            if pointInRect(x, y, rect) then
+                selectedIndex = i
+                toggleOfferLock(offers, i)
+                return
+            end
         end
         for i, rect in ipairs(layout.cards) do
             if pointInRect(x, y, rect) then
@@ -713,5 +776,12 @@ ShopState.rerollCostForIndex = rerollCostForIndex
 ShopState.normalizeOffer = normalizeOffer
 ShopState.removeOfferById = removeOfferById
 ShopState.resolveReturnTo = resolveReturnTo
+ShopState.toggleOfferLock = toggleOfferLock
+ShopState.clearOfferLocks = clearOfferLocks
+ShopState.mergeRerollOffers = mergeRerollOffers
+
+-- Read-only seams for tests that exercise the live call sites.
+function ShopState.getOffers() return offers end
+function ShopState.getRerollIndex() return rerollIndex end
 
 return ShopState
