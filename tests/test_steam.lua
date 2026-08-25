@@ -8,8 +8,41 @@ local H = require("tests/helpers")
 local Steam = require("modules/steam/steam")
 local TypingTrainer = require("modules/typing/trainer")
 local PlayerModel = require("modules/player/playerModel")
+local Run = require("modules/game/run")
+local Context = require("modules/game/context")
+local StateManager = require("engine/stateManager")
+local TextGenerator = require("modules/typing/textGenerator")
+local RoundState = require("states/roundState")
+local ShopState = require("states/shopState")
 
 local T = {}
+
+local function completeOneCharacterRound(player)
+    local originalGetRandomText = TextGenerator.getRandomText
+    local originalSwitch = StateManager.switch
+
+    TextGenerator.getRandomText = function() return "a" end
+    StateManager.switch = function() end
+    Context.setPlayer(player)
+
+    local ok, err = pcall(function()
+        RoundState.enter()
+        RoundState.textinput("a")
+    end)
+
+    RoundState.exit()
+    TextGenerator.getRandomText = originalGetRandomText
+    StateManager.switch = originalSwitch
+
+    if not ok then error(err, 2) end
+end
+
+local function enterShop(player)
+    player.save = function() return true end
+    Context.setPlayer(player)
+    ShopState.enter({})
+    H.isTrue(#ShopState.getOffers() > 0, "expected the live shop to generate offers")
+end
 
 function T.init_reports_unavailable_when_luasteam_is_absent()
     -- Headless tests run with no window and no Steamworks SDK -- init must
@@ -124,6 +157,107 @@ function T.perfect_accuracy_over_100_keystrokes_unlocks_accuracy_surgeon()
     player:startSession()
     player:endSession({ keystrokes = 100, mistakes = 0, correct = 100, accuracy = 100, wpm = 0 })
     H.isTrue(Steam.isAchievementSent("ACCURACY_SURGEON"))
+end
+
+-- Run/economy lifecycle achievement triggers -----------------------------
+
+function T.first_round_complete_unlocks_only_on_the_first_round_completion()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    completeOneCharacterRound(player)
+    H.isTrue(Steam.isAchievementSent("FIRST_ROUND_COMPLETE"))
+
+    Steam.shutdown()
+    completeOneCharacterRound(player)
+    H.isFalse(Steam.isAchievementSent("FIRST_ROUND_COMPLETE"),
+        "a later round completion must not re-trigger the first-round achievement")
+end
+
+function T.first_run_complete_unlocks_only_when_the_run_reaches_a_terminal_state()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 2, seed = 1 })
+
+    run:submitScore(run:getRequiredScore(1))
+    H.isFalse(Steam.isAchievementSent("FIRST_RUN_COMPLETE"),
+        "advancing to another round must not count as completing the run")
+
+    run:submitScore(run:getRequiredScore(2) - 1)
+    H.isTrue(Steam.isAchievementSent("FIRST_RUN_COMPLETE"),
+        "a gate failure that ends the run must count as run completion")
+end
+
+function T.victory_run_unlocks_on_victory_but_not_on_failure()
+    Steam.shutdown()
+    local failedRun = Run.new({ rounds = 1, seed = 1 })
+    failedRun:submitScore(failedRun:getRequiredScore(1) - 1)
+
+    H.isTrue(Steam.isAchievementSent("FIRST_RUN_COMPLETE"))
+    H.isFalse(Steam.isAchievementSent("VICTORY_RUN"),
+        "a failed run must never unlock the victory achievement")
+
+    Steam.shutdown()
+    local victoriousRun = Run.new({ rounds = 1, seed = 1 })
+    victoriousRun:submitScore(victoriousRun:getRequiredScore(1))
+
+    H.isTrue(Steam.isAchievementSent("FIRST_RUN_COMPLETE"))
+    H.isTrue(Steam.isAchievementSent("VICTORY_RUN"))
+end
+
+function T.first_purchase_unlocks_only_for_the_first_successful_purchase()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player.totalMoney = 0
+    enterShop(player)
+
+    local offerCount = #ShopState.getOffers()
+    local cost = ShopState.getOffers()[1].cost
+    H.isTrue(cost > 0, "expected the first live shop offer to have a positive cost")
+
+    ShopState.keypressed("return")
+    H.isFalse(Steam.isAchievementSent("FIRST_PURCHASE"),
+        "an insufficient-funds attempt must not unlock the purchase achievement")
+    H.equal(#ShopState.getOffers(), offerCount,
+        "an insufficient-funds attempt must leave the offer in the shop")
+
+    player.totalMoney = cost
+    ShopState.keypressed("return")
+    H.isTrue(Steam.isAchievementSent("FIRST_PURCHASE"))
+    H.equal(player.stats.moneySpent, cost)
+
+    ShopState.exit()
+    Steam.shutdown()
+    player.totalMoney = 1000
+    enterShop(player)
+    ShopState.keypressed("return")
+    H.isFalse(Steam.isAchievementSent("FIRST_PURCHASE"),
+        "a later successful purchase must not re-trigger the first-purchase achievement")
+end
+
+function T.money_1000_unlocks_only_when_lifetime_earnings_cross_the_threshold()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    player:startSession()
+    player:endSession({ moneyEarned = 999 })
+    H.isFalse(Steam.isAchievementSent("MONEY_1000"),
+        "999 lifetime coins must remain below the achievement threshold")
+
+    player:startSession()
+    player:endSession({ moneyEarned = 1 })
+    H.isTrue(Steam.isAchievementSent("MONEY_1000"))
+
+    Steam.shutdown()
+    player:startSession()
+    player:endSession({ moneyEarned = 1 })
+    H.isFalse(Steam.isAchievementSent("MONEY_1000"),
+        "earnings after the threshold was already reached must not re-trigger the achievement")
+end
+
+function T.teardown()
+    RoundState.exit()
+    ShopState.exit()
+    Context.reset()
 end
 
 return T

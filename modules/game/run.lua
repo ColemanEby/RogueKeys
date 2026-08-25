@@ -5,6 +5,7 @@
 -- states (units 7, 10, 11) and the mutator-aware trainer/text-gen (unit 15).
 
 local ConfigManager = require("engine/configManager")
+local Steam = require("modules/steam/steam")
 
 local Run = {}
 Run.__index = Run
@@ -120,6 +121,13 @@ function Run:submitScore(score)
     else
         self.round = round + 1
         advanced = true
+    end
+
+    if self.complete or self.failed then
+        Steam.unlockAchievement("FIRST_RUN_COMPLETE")
+    end
+    if self.complete and not self.failed then
+        Steam.unlockAchievement("VICTORY_RUN")
     end
 
     return {

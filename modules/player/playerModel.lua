@@ -279,8 +279,12 @@ function PlayerModel:endSession(sessionStats)
 
         if type(sessionStats.moneyEarned) == "number" then
             matchData.moneyEarned = sessionStats.moneyEarned
+            local oldMoneyEarned = self.stats.moneyEarned or 0
             self.stats.moneyEarned = (self.stats.moneyEarned or 0) + sessionStats.moneyEarned
             self.runStats.moneyEarned = (self.runStats.moneyEarned or 0) + sessionStats.moneyEarned
+            if oldMoneyEarned < 1000 and self.stats.moneyEarned >= 1000 then
+                Steam.unlockAchievement("MONEY_1000")
+            end
         end
 
         self.runStats.roundsPlayed = (self.runStats.roundsPlayed or 0) + 1

@@ -9,6 +9,7 @@ local Theme = require("modules/ui/theme")
 local Screen = require("modules/ui/screen")
 local KeyboardModel = require("modules/keyboard/keyboardModel")
 local KeyboardView = require("modules/keyboard/keyboardView")
+local Steam = require("modules/steam/steam")
 
 local ShopState = {
     name = "ShopState",
@@ -257,7 +258,12 @@ local function purchaseOffer(index)
 
     local player = Context.player()
     if player.totalMoney < (item.cost or 0) then return end
+    local isFirstPurchase = (player.stats.moneySpent or 0) == 0
     if not player:spendMoney(item.cost) then return end
+
+    if isFirstPurchase then
+        Steam.unlockAchievement("FIRST_PURCHASE")
+    end
 
     local applied = applyItemEffect(player.keyboard, item)
     if not applied and _G.DEBUG_MODE then

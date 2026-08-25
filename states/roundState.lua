@@ -9,6 +9,7 @@ local TextGenerator = require("modules/typing/textGenerator")
 local Context = require("modules/game/context")
 local Screen = require("modules/ui/screen")
 local Theme = require("modules/ui/theme")
+local Steam = require("modules/steam/steam")
 
 local RoundState = {
     name = "RoundState",
@@ -47,6 +48,9 @@ function RoundState.enter()
             stats.moneyEarned = moneyEarned
 
             -- endSession and addMoney both persist; do not save a third time.
+            if (player.stats.totalSessions or 0) == 0 then
+                Steam.unlockAchievement("FIRST_ROUND_COMPLETE")
+            end
             player:endSession(stats)
             player:addMoney(moneyEarned)
 
