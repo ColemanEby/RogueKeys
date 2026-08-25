@@ -5,6 +5,7 @@
 local StateManager = require("engine/stateManager")
 local Theme = require("modules/ui/theme")
 local Screen = require("modules/ui/screen")
+local Background = require("modules/ui/background")
 
 local MenuState = {
     name = "MenuState",
@@ -122,6 +123,7 @@ end
 function MenuState.draw()
     local alpha = fadeTimer / FADE_DURATION
 
+    Background.draw(animTime)
     drawTitle(alpha)
 
     local rects, panelX = computeItemRects()
