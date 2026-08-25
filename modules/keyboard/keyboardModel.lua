@@ -317,6 +317,16 @@ function KeyboardModel:getInstalled()
     return self.installedItems or {}
 end
 
+function KeyboardModel:isFullyLegendary()
+    local installed = self:getInstalled()
+    if #installed == 0 then return false end
+
+    for _, item in ipairs(installed) do
+        if item.rarity ~= "legendary" then return false end
+    end
+    return true
+end
+
 function KeyboardModel:getItemsOnKey(key)
     key = string.lower(key)
     local result = {}

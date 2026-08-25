@@ -44,6 +44,24 @@ local function enterShop(player)
     H.isTrue(#ShopState.getOffers() > 0, "expected the live shop to generate offers")
 end
 
+local function purchaseShopItem(player, item)
+    player.totalMoney = item.cost
+    enterShop(player)
+    ShopState.getOffers()[1] = item
+    ShopState.keypressed("return")
+end
+
+local function itemWithRarity(id, key, rarity, effectKind)
+    return {
+        id = id,
+        name = id,
+        key = key,
+        rarity = rarity,
+        effect = { kind = effectKind or "flat", value = 1 },
+        cost = 1,
+    }
+end
+
 function T.init_reports_unavailable_when_luasteam_is_absent()
     -- Headless tests run with no window and no Steamworks SDK -- init must
     -- report false, not raise.
@@ -232,6 +250,89 @@ function T.first_purchase_unlocks_only_for_the_first_successful_purchase()
     ShopState.keypressed("return")
     H.isFalse(Steam.isAchievementSent("FIRST_PURCHASE"),
         "a later successful purchase must not re-trigger the first-purchase achievement")
+end
+
+-- Item/rarity achievement triggers ---------------------------------------
+
+function T.installing_a_common_item_unlocks_no_rarity_achievements()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    purchaseShopItem(player, itemWithRarity("common_test", "a", "common"))
+
+    H.isFalse(Steam.isAchievementSent("FIRST_RARE_ITEM"))
+    H.isFalse(Steam.isAchievementSent("FIRST_LEGENDARY"))
+    H.isFalse(Steam.isAchievementSent("FULL_LEGENDARY_BOARD"))
+end
+
+function T.installing_a_rare_item_unlocks_first_rare_item_only()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    purchaseShopItem(player, itemWithRarity("rare_test", "a", "rare"))
+
+    H.isTrue(Steam.isAchievementSent("FIRST_RARE_ITEM"))
+    H.isFalse(Steam.isAchievementSent("FIRST_LEGENDARY"))
+end
+
+function T.installing_an_epic_item_unlocks_first_rare_item_only()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    purchaseShopItem(player, itemWithRarity("epic_test", "a", "epic"))
+
+    H.isTrue(Steam.isAchievementSent("FIRST_RARE_ITEM"))
+    H.isFalse(Steam.isAchievementSent("FIRST_LEGENDARY"))
+end
+
+function T.installing_a_legendary_item_unlocks_both_rarity_milestones()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+
+    purchaseShopItem(player, itemWithRarity("legendary_test", "a", "legendary"))
+
+    H.isTrue(Steam.isAchievementSent("FIRST_RARE_ITEM"))
+    H.isTrue(Steam.isAchievementSent("FIRST_LEGENDARY"))
+end
+
+function T.full_legendary_board_requires_every_installed_item_to_be_legendary()
+    Steam.shutdown()
+    local mixedPlayer = PlayerModel.new()
+    H.isFalse(mixedPlayer.keyboard:isFullyLegendary(),
+        "an empty board must not qualify as a full legendary board")
+
+    purchaseShopItem(mixedPlayer, itemWithRarity("common_test", "a", "common"))
+    ShopState.exit()
+
+    purchaseShopItem(mixedPlayer, itemWithRarity("legendary_test", "b", "legendary"))
+
+    H.isFalse(Steam.isAchievementSent("FULL_LEGENDARY_BOARD"),
+        "one non-legendary installed item must keep a mixed board from qualifying")
+
+    ShopState.exit()
+    Steam.shutdown()
+    local legendaryPlayer = PlayerModel.new()
+
+    purchaseShopItem(legendaryPlayer, itemWithRarity("legendary_only", "a", "legendary"))
+
+    H.isTrue(Steam.isAchievementSent("FULL_LEGENDARY_BOARD"),
+        "a non-empty board of only legendary items must qualify")
+end
+
+function T.successful_item_purchase_flushes_the_achievement_batch_once()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    local originalStore = Steam.store
+    local storeCalls = 0
+    Steam.store = function() storeCalls = storeCalls + 1 end
+
+    local ok, err = pcall(function()
+        purchaseShopItem(player, itemWithRarity("legendary_test", "a", "legendary"))
+    end)
+    Steam.store = originalStore
+
+    if not ok then error(err, 2) end
+    H.equal(storeCalls, 1, "a successful purchase must flush its achievement batch exactly once")
 end
 
 function T.money_1000_unlocks_only_when_lifetime_earnings_cross_the_threshold()

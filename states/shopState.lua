@@ -9,6 +9,7 @@ local Theme = require("modules/ui/theme")
 local Screen = require("modules/ui/screen")
 local KeyboardModel = require("modules/keyboard/keyboardModel")
 local KeyboardView = require("modules/keyboard/keyboardView")
+local Rarity = require("modules/items/rarity")
 local Steam = require("modules/steam/steam")
 
 local ShopState = {
@@ -269,6 +270,19 @@ local function purchaseOffer(index)
     if not applied and _G.DEBUG_MODE then
         print("ShopState: purchased '" .. tostring(item.id) .. "' but its effect could not be applied")
     end
+    if applied then
+        local rarityIndex = Rarity.index(item.rarity)
+        if rarityIndex and rarityIndex >= Rarity.index("rare") then
+            Steam.unlockAchievement("FIRST_RARE_ITEM")
+        end
+        if item.rarity == "legendary" then
+            Steam.unlockAchievement("FIRST_LEGENDARY")
+        end
+        if player.keyboard:isFullyLegendary() then
+            Steam.unlockAchievement("FULL_LEGENDARY_BOARD")
+        end
+    end
+    Steam.store()
 
     offers = removeOfferById(offers, item.id)
     player:save()
