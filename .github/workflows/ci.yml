@@ -52,3 +52,22 @@ jobs:
       # way there -- xvfb-run keeps that from being a flaky failure mode.
       - name: Run headless test suite
         run: xvfb-run -a ./squashfs-root/bin/love . --test
+
+  # CI artifact only for manual retrieval; no publishing or Steam upload.
+  package:
+    name: Package .love artifact
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build .love artifact
+        run: bash tools/build.sh
+
+      - name: Upload .love artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RogueKeys-love
+          path: dist/RogueKeys.love
+          if-no-files-found: error
