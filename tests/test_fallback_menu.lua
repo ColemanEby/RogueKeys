@@ -7,14 +7,47 @@
 -- segfaults the LOVE process uncatchably. Primary-button mousepressed() hits
 -- Theme.font("body"):getHeight() on nil and errors. These paths are only safe
 -- with a real graphics context.
+--
+-- The menu selection and debug flag are private upvalues. Tests can mutate
+-- both through keypressed(), but the public API cannot restore the debug flag
+-- to a known value, so teardown uses debug.getupvalue/setupvalue by name.
 
 local H = require("tests/helpers")
 local StateManager = require("engine/stateManager")
+local FallbackMenuState = require("states/fallbackMenuState")
 
 local T = {}
 
 local originalSwitch, originalQuit
 local switchCalls, switchState, quitCalls
+
+local function findUpvalue(fn, targetName)
+    local index = 1
+    while true do
+        local name, value = debug.getupvalue(fn, index)
+        if name == nil then
+            H.fail("could not find upvalue '" .. targetName .. "'")
+        end
+        if name == targetName then return index, value end
+        index = index + 1
+    end
+end
+
+local function getUpvalue(fn, targetName)
+    local _, value = findUpvalue(fn, targetName)
+    return value
+end
+
+local function setUpvalue(fn, targetName, value)
+    local index = findUpvalue(fn, targetName)
+    local name = debug.setupvalue(fn, index, value)
+    if name == nil then
+        H.fail("could not restore upvalue '" .. targetName .. "'")
+    end
+end
+
+local pristineSelectedItem = getUpvalue(FallbackMenuState.keypressed, "selectedItem")
+local pristineShowDebugInfo = getUpvalue(FallbackMenuState.keypressed, "showDebugInfo")
 
 local function resetRecorder()
     switchCalls = 0
@@ -61,6 +94,8 @@ function T.setup()
 end
 
 function T.teardown()
+    setUpvalue(FallbackMenuState.keypressed, "selectedItem", pristineSelectedItem)
+    setUpvalue(FallbackMenuState.keypressed, "showDebugInfo", pristineShowDebugInfo)
     StateManager.switch = originalSwitch
     love.event.quit = originalQuit
 end
@@ -75,9 +110,22 @@ function T.construction_returns_expected_table()
 end
 
 function T.createState_wrapping_supplies_full_contract_and_update_is_safe()
-    local State = StateManager.createState(require("states/fallbackMenuState"))
-    H.isType(State.update, "function")
-    H.succeeds(function() State.update(1 / 60) end)
+    local State = StateManager.createState(FallbackMenuState)
+    H.isType(State.enter, "function", '"enter" should be a function')
+    H.isType(State.exit, "function", '"exit" should be a function')
+    H.isType(State.update, "function", '"update" should be a function')
+    H.isType(State.draw, "function", '"draw" should be a function')
+    H.isType(State.keypressed, "function", '"keypressed" should be a function')
+    H.isType(State.keyreleased, "function", '"keyreleased" should be a function')
+    H.isType(State.textinput, "function", '"textinput" should be a function')
+    H.isType(State.resize, "function", '"resize" should be a function')
+
+    H.succeeds(function() State.exit() end, '"exit" should be safe')
+    H.succeeds(function() State.update(1 / 60) end, '"update" should be safe')
+    H.succeeds(function() State.keyreleased("escape") end,
+        '"keyreleased" should be safe')
+    H.succeeds(function() State.textinput("a") end, '"textinput" should be safe')
+    H.succeeds(function() State.resize(1280, 720) end, '"resize" should be safe')
 end
 
 function T.enter_is_safe_headless()
@@ -152,6 +200,24 @@ function T.f1_is_safe_and_leaves_state_usable()
     State.keypressed("return")
     H.equal(switchState, "roundState", "navigation still works after f1")
     H.equal(quitCalls, 0)
+end
+
+function T.teardown_restores_module_local_state()
+    local State = StateManager.createState(FallbackMenuState)
+
+    State.keypressed("up")
+    State.keypressed("f1")
+    H.equal(getUpvalue(State.keypressed, "selectedItem"), 2,
+        "up should mutate selectedItem before teardown")
+    H.equal(getUpvalue(State.keypressed, "showDebugInfo"), false,
+        "f1 should mutate showDebugInfo before teardown")
+
+    T.teardown()
+
+    H.equal(getUpvalue(State.keypressed, "selectedItem"), 1,
+        "teardown should restore selectedItem")
+    H.equal(getUpvalue(State.keypressed, "showDebugInfo"), true,
+        "teardown should restore showDebugInfo")
 end
 
 function T.mousepressed_non_primary_button_is_noop()
