@@ -130,6 +130,21 @@ function Run:submitScore(score)
         Steam.unlockAchievement("VICTORY_RUN")
     end
 
+    if passed then
+        local mutators = self:getMutators(round)
+        if #mutators > 0 then
+            Steam.unlockAchievement("BOSS_ROUND_CLEAR")
+            local mutator = mutators[1]
+            if mutator == "no_backspace" then
+                Steam.unlockAchievement("NO_BACKSPACE_CLEAR")
+            elseif mutator == "decaying_text" then
+                Steam.unlockAchievement("DECAYING_TEXT_CLEAR")
+            elseif mutator == "timed_burst" then
+                Steam.unlockAchievement("TIMED_BURST_CLEAR")
+            end
+        end
+    end
+
     return {
         passed = passed,
         requiredScore = requiredScore,

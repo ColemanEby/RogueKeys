@@ -222,6 +222,66 @@ function T.victory_run_unlocks_on_victory_but_not_on_failure()
     H.isTrue(Steam.isAchievementSent("VICTORY_RUN"))
 end
 
+-- Boss/mutator round-clear achievement triggers -------------------------
+
+function T.clearing_a_no_backspace_boss_round_unlocks_boss_and_mutator_achievements()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 3, seed = 1 }) -- round 3 mutator: no_backspace
+    run:submitScore(run:getRequiredScore(1))
+    run:submitScore(run:getRequiredScore(2))
+    run:submitScore(run:getRequiredScore(3))
+    H.isTrue(Steam.isAchievementSent("BOSS_ROUND_CLEAR"))
+    H.isTrue(Steam.isAchievementSent("NO_BACKSPACE_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("DECAYING_TEXT_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("TIMED_BURST_CLEAR"))
+end
+
+function T.clearing_a_decaying_text_boss_round_unlocks_boss_and_mutator_achievements()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 3, seed = 4 }) -- round 3 mutator: decaying_text
+    run:submitScore(run:getRequiredScore(1))
+    run:submitScore(run:getRequiredScore(2))
+    run:submitScore(run:getRequiredScore(3))
+    H.isTrue(Steam.isAchievementSent("BOSS_ROUND_CLEAR"))
+    H.isTrue(Steam.isAchievementSent("DECAYING_TEXT_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("NO_BACKSPACE_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("TIMED_BURST_CLEAR"))
+end
+
+function T.clearing_a_timed_burst_boss_round_unlocks_boss_and_mutator_achievements()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 3, seed = 2 }) -- round 3 mutator: timed_burst
+    run:submitScore(run:getRequiredScore(1))
+    run:submitScore(run:getRequiredScore(2))
+    run:submitScore(run:getRequiredScore(3))
+    H.isTrue(Steam.isAchievementSent("BOSS_ROUND_CLEAR"))
+    H.isTrue(Steam.isAchievementSent("TIMED_BURST_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("NO_BACKSPACE_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("DECAYING_TEXT_CLEAR"))
+end
+
+function T.clearing_a_normal_round_unlocks_no_boss_or_mutator_achievements()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 2, seed = 1 })
+    run:submitScore(run:getRequiredScore(1))
+    H.isFalse(Steam.isAchievementSent("BOSS_ROUND_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("NO_BACKSPACE_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("DECAYING_TEXT_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("TIMED_BURST_CLEAR"))
+end
+
+function T.failing_a_boss_round_unlocks_no_boss_or_mutator_achievements()
+    Steam.shutdown()
+    local run = Run.new({ rounds = 3, seed = 1 }) -- round 3 mutator: no_backspace
+    run:submitScore(run:getRequiredScore(1))
+    run:submitScore(run:getRequiredScore(2))
+    run:submitScore(run:getRequiredScore(3) - 1)
+    H.isFalse(Steam.isAchievementSent("BOSS_ROUND_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("NO_BACKSPACE_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("DECAYING_TEXT_CLEAR"))
+    H.isFalse(Steam.isAchievementSent("TIMED_BURST_CLEAR"))
+end
+
 function T.first_purchase_unlocks_only_for_the_first_successful_purchase()
     Steam.shutdown()
     local player = PlayerModel.new()
