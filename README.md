@@ -74,16 +74,16 @@ committed.
 
 ## Keyboard Sprites
 
-The game can use sprites for keyboard keys if you provide a sprite sheet.
-The legacy 16x16 sheet goes at:
+The layered keyboard renderer looks for the current 32px keycap sheet at:
 
 ```
-resources/sprites/keyboard_letters_and_symbols.png
+resources/sprites/keycaps_32.png
 ```
 
-(128x224 pixels, an 8x14 grid; mapping defined in
-`modules/keyboard/keySpriteMapper.lua`.) If no sprite sheet is found, the
-game falls back to shape-based key rendering — nothing crashes without art.
+When present, the sheet is rendered at integer multiples of its native size
+with switch housing, keycap body, legend, and effect overlays. When absent,
+the renderer generates procedural keycap templates; if cap rendering fails,
+the keyboard view falls back to themed shapes.
 
 ## Adding assets
 
@@ -111,8 +111,7 @@ resources/sounds/                   # key thocks, UI/coin SFX, music loops
 │   ├── game/                # Shared game context (Context.player(), Context.run)
 │   ├── keyboard/           # Keyboard-related modules
 │   │   ├── keyboardModel.lua  # Data model for keyboards
-│   │   ├── keyboardView.lua   # Visual representation of keyboards
-│   │   └── keySpriteMapper.lua # Sprite mapping for keyboard keys
+│   │   └── keyboardView.lua   # Visual representation of keyboards
 │   ├── player/             # Player-related modules
 │   │   └── playerModel.lua # Player progression and stats
 │   ├── steam/              # Optional Steamworks wrapper (no-ops without luasteam)
