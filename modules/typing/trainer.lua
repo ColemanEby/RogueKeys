@@ -140,6 +140,7 @@ function TypingTrainer.new(options)
     self.finished = false
     self.correctCount = 0
     self.mistakes = 0
+    self.critCount = 0
     self.currentStreak = 0
     self.longestStreak = 0
     self.lastMilestoneStreak = 0
@@ -242,6 +243,10 @@ function TypingTrainer:handleInput(char)
         self:checkStreakMilestone()
 
         if procs.crit then
+            self.critCount = self.critCount + 1
+            if self.critCount == 10 then
+                Steam.unlockAchievement("CRIT_STREAK")
+            end
             Audio.playSfx("crit")
             if self.onCrit then self.onCrit(char, points) end
         end

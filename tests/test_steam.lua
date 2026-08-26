@@ -12,6 +12,7 @@ local Run = require("modules/game/run")
 local Context = require("modules/game/context")
 local StateManager = require("engine/stateManager")
 local TextGenerator = require("modules/typing/textGenerator")
+local ItemDefs = require("modules/items/itemDefs")
 local RoundState = require("states/roundState")
 local ShopState = require("states/shopState")
 
@@ -393,6 +394,79 @@ function T.successful_item_purchase_flushes_the_achievement_batch_once()
 
     if not ok then error(err, 2) end
     H.equal(storeCalls, 1, "a successful purchase must flush its achievement batch exactly once")
+end
+
+function T.completing_a_real_item_set_unlocks_set_complete()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    local setItem = ItemDefs.byId("homerow_harmony")
+
+    purchaseShopItem(player, setItem)
+    ShopState.exit()
+    for i, memberId in ipairs(setItem.effect.setMembers) do
+        purchaseShopItem(player, ItemDefs.byId(memberId))
+        if i < #setItem.effect.setMembers then
+            H.isFalse(Steam.isAchievementSent("SET_COMPLETE"),
+                "an incomplete item set must not unlock the achievement")
+        end
+        ShopState.exit()
+    end
+
+    H.isTrue(Steam.isAchievementSent("SET_COMPLETE"))
+end
+
+function T.occupying_every_home_row_key_unlocks_home_row_hero()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    local homeRow = { "a", "s", "d", "f", "g", "h", "j", "k", "l" }
+
+    for i, key in ipairs(homeRow) do
+        purchaseShopItem(player, itemWithRarity("home_row_" .. key, key, "common"))
+        if i < #homeRow then
+            H.isFalse(Steam.isAchievementSent("HOME_ROW_HERO"),
+                "eight occupied home-row keys must not unlock the achievement")
+        end
+        ShopState.exit()
+    end
+
+    H.isTrue(Steam.isAchievementSent("HOME_ROW_HERO"))
+end
+
+function T.ten_crits_in_one_round_unlocks_crit_streak()
+    Steam.shutdown()
+    local critModel = {
+        computeKeyScore = function() return 1, { crit = true } end,
+    }
+    local trainer = TypingTrainer.new({
+        text = string.rep("a", 10),
+        keyboardModel = critModel,
+    })
+
+    for _ = 1, 9 do trainer:handleInput("a") end
+    H.equal(trainer.critCount, 9)
+    H.isFalse(Steam.isAchievementSent("CRIT_STREAK"),
+        "nine crits must remain below the achievement threshold")
+
+    local freshTrainer = TypingTrainer.new({ text = "a", keyboardModel = critModel })
+    H.equal(freshTrainer.critCount, 0, "a fresh round must reset the crit tally")
+
+    trainer:handleInput("a")
+    H.isTrue(Steam.isAchievementSent("CRIT_STREAK"))
+end
+
+function T.hundred_sessions_unlocks_on_the_threshold_crossing()
+    Steam.shutdown()
+    local player = PlayerModel.new()
+    player.stats.totalSessions = 98
+
+    player:startSession()
+    player:endSession({})
+    H.isFalse(Steam.isAchievementSent("HUNDRED_SESSIONS"),
+        "99 completed sessions must remain below the achievement threshold")
+
+    player:startSession()
+    player:endSession({})
+    H.isTrue(Steam.isAchievementSent("HUNDRED_SESSIONS"))
 end
 
 function T.money_1000_unlocks_only_when_lifetime_earnings_cross_the_threshold()

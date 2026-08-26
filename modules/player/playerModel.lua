@@ -214,6 +214,9 @@ function PlayerModel:endSession(sessionStats)
 
     self.stats.totalPlayTime = (self.stats.totalPlayTime or 0) + sessionTime
     self.stats.totalSessions = (self.stats.totalSessions or 0) + 1
+    if self.stats.totalSessions == 100 then
+        Steam.unlockAchievement("HUNDRED_SESSIONS")
+    end
 
     if sessionStats then
         local matchData = {}

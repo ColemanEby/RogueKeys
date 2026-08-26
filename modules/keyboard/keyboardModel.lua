@@ -40,6 +40,8 @@ local MULTIPLIER_BONUS_BY_RARITY = {
     common = 0, uncommon = 0.01, rare = 0.02, epic = 0.04, legendary = 0.08,
 }
 
+local HOME_ROW_KEYS = { "a", "s", "d", "f", "g", "h", "j", "k", "l" }
+
 -- Default QWERTY layout to use when config is not available
 local DEFAULT_QWERTY_LAYOUT = {
     name = "QWERTY Default",
@@ -323,6 +325,36 @@ function KeyboardModel:isFullyLegendary()
 
     for _, item in ipairs(installed) do
         if item.rarity ~= "legendary" then return false end
+    end
+    return true
+end
+
+function KeyboardModel:hasCompleteSet()
+    local installed = self:getInstalled()
+    if #installed == 0 then return false end
+
+    local installedIds = self:getInstalledIdSet()
+    for _, item in ipairs(installed) do
+        if item.effect.kind == "set" then
+            local complete = true
+            for _, id in ipairs(item.effect.setMembers or {}) do
+                if not installedIds[id] then
+                    complete = false
+                    break
+                end
+            end
+            if complete then return true end
+        end
+    end
+    return false
+end
+
+function KeyboardModel:isHomeRowComplete()
+    local installed = self:getInstalled()
+    if #installed == 0 then return false end
+
+    for _, key in ipairs(HOME_ROW_KEYS) do
+        if #self:getItemsOnKey(key) == 0 then return false end
     end
     return true
 end

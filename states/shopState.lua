@@ -278,6 +278,12 @@ local function purchaseOffer(index)
         if item.rarity == "legendary" then
             Steam.unlockAchievement("FIRST_LEGENDARY")
         end
+        if player.keyboard:hasCompleteSet() then
+            Steam.unlockAchievement("SET_COMPLETE")
+        end
+        if player.keyboard:isHomeRowComplete() then
+            Steam.unlockAchievement("HOME_ROW_HERO")
+        end
         if player.keyboard:isFullyLegendary() then
             Steam.unlockAchievement("FULL_LEGENDARY_BOARD")
         end
