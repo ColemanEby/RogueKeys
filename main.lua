@@ -334,7 +334,9 @@ function love.resize(w, h)
 end
 
 function love.quit()
-    local ok, err = pcall(function() ConfigManager:saveAllConfigs() end)
-    if not ok then print("ERROR saving configs: " .. tostring(err)) end
+    if not _G.HEADLESS then
+        local ok, err = pcall(function() ConfigManager:saveAllConfigs() end)
+        if not ok then print("ERROR saving configs: " .. tostring(err)) end
+    end
     return false
 end
