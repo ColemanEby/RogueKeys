@@ -1,10 +1,9 @@
 # Achievements Spec
 
-This is the spec other units implement against. **Nothing here is wired up
-by this batch** — `modules/steam/steam.lua` provides
-`Steam.unlockAchievement(id)` (safe no-op with no Steamworks SDK present),
-but no gameplay module calls it yet. When a unit below lands the feature next
-to the trigger point listed, it should add the one-line call there.
+This spec is fully wired: every achievement id in the table has a live
+`Steam.unlockAchievement(id)` call site in gameplay code under `modules/` or
+`states/`. Keep it as the id, display-name, and trigger-point reference when
+configuring achievements in Steamworks or maintaining their gameplay hooks.
 
 `Steam.unlockAchievement` is idempotent per session (repeat calls for an
 already-sent id are free), so callers can call it every time the trigger
@@ -18,7 +17,7 @@ you type into the Steamworks achievement config in the App Admin panel. They
 must never change once configured there; display name/description can be
 edited freely, the id cannot.
 
-## The list (24)
+## The list (25)
 
 | Id | Display name | Description | Visibility | Trigger point |
 |---|---|---|---|---|
