@@ -1,3 +1,5 @@
+> **FROZEN 2026-09-01** — tasks now live on the Hermes kanban board (`hermes kanban --board fleet list`, http://192.168.1.128:8090/floor.html). This file is history; nothing reads or writes it. Do not edit.
+
 # Backlog
 
 Swept by the `quota-sweeper` automation (see
