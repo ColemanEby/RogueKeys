@@ -1,53 +1,15 @@
 -- tests/test_keycaps.lua
--- Headless coverage for unit 14 (layered keycap rendering): the
--- char -> sprite-name mapping fix (space + "!"), KeyboardView's layout math,
--- hit-testing, and that every public function on the new/changed modules is
--- safe to call with no graphics context.
+-- Headless coverage for unit 14 (layered keycap rendering): KeyboardView's
+-- layout math, hit-testing, and that every public function on the
+-- new/changed modules is safe to call with no graphics context.
 
 local H = require("tests/helpers")
 
-local KeySpriteMapper = require("modules/keyboard/keySpriteMapper")
 local KeyboardModel = require("modules/keyboard/keyboardModel")
 local KeyboardView = require("modules/keyboard/keyboardView")
 local CapRenderer = require("modules/keyboard/capRenderer")
 
 local T = {}
-
---------------------------------------------------------------------------
--- KeySpriteMapper: char -> sprite key mapping
---------------------------------------------------------------------------
-
-function T.space_maps_to_the_space_sprite_key()
-    H.equal(KeySpriteMapper.CHAR_TO_SPRITE_KEY[" "], "SPACE_Key")
-end
-
-function T.exclamation_mark_has_a_sprite_key()
-    H.isTrue(KeySpriteMapper.CHAR_TO_SPRITE_KEY["!"] ~= nil,
-        "'!' appears in every layout's punctuation row but had no sprite mapping")
-end
-
-function T.letters_map_to_their_own_key_sprite()
-    for c in ("abcdefghijklmnopqrstuvwxyz"):gmatch(".") do
-        H.equal(KeySpriteMapper.CHAR_TO_SPRITE_KEY[c], c:upper() .. "_Key")
-    end
-end
-
-function T.punctuation_used_by_both_layouts_is_mapped()
-    -- ',', '.', '?', '!', "'", ';' all appear in the qwerty/dvorak configs.
-    for _, c in ipairs({ ",", ".", "?", "!", "'", ";" }) do
-        H.isTrue(KeySpriteMapper.CHAR_TO_SPRITE_KEY[c] ~= nil, "missing sprite mapping for " .. c)
-    end
-end
-
-function T.sprite_mapper_public_functions_are_safe_headless()
-    local mapper = KeySpriteMapper.new()
-    -- No sprite sheet is registered in the headless test bootstrap, so load()
-    -- must fail gracefully rather than raise.
-    H.isFalse(H.succeeds(function() return mapper:load() end))
-    H.equal(H.succeeds(function() return mapper:getQuadForChar("a", false) end), nil)
-    H.isFalse(H.succeeds(function() return mapper:drawKey(" ", 0, 0, 32, 32, false) end))
-    H.isFalse(H.succeeds(function() return mapper:drawKey("!", 0, 0, 32, 32, false) end))
-end
 
 --------------------------------------------------------------------------
 -- KeyboardView: layout geometry

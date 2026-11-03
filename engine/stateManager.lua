@@ -12,6 +12,7 @@
 -- do not show every ancestor.
 
 local Screen = require("modules/ui/screen")
+local Theme = require("modules/ui/theme")
 
 local StateManager = {
     current = nil,
@@ -297,7 +298,7 @@ function StateManager.drawTransition()
         w, h = love.graphics.getWidth(), love.graphics.getHeight()
     end
 
-    love.graphics.setColor(0, 0, 0, transitionAlpha)
+    Theme.setColor("overlayFade", transitionAlpha)
     love.graphics.rectangle("fill", 0, 0, w, h)
     love.graphics.setColor(1, 1, 1, 1)
 end
@@ -323,7 +324,7 @@ function StateManager.drawUnderlay()
         w, h = love.graphics.getWidth(), love.graphics.getHeight()
     end
 
-    love.graphics.setColor(0, 0, 0, 0.55)
+    Theme.setColor("overlayDim")
     love.graphics.rectangle("fill", 0, 0, w, h)
     love.graphics.setColor(1, 1, 1, 1)
 end

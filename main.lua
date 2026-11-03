@@ -91,7 +91,9 @@ local function runTests()
         ConfigManager:init()
     end)
     if not ok then
-        print("WARNING: test bootstrap failed: " .. tostring(err))
+        print("ERROR: test bootstrap failed: " .. tostring(err))
+        love.event.quit(1)
+        return
     end
 
     local Runner = require("tests/run")
@@ -332,7 +334,9 @@ function love.resize(w, h)
 end
 
 function love.quit()
-    local ok, err = pcall(function() ConfigManager:saveAllConfigs() end)
-    if not ok then print("ERROR saving configs: " .. tostring(err)) end
+    if not _G.HEADLESS then
+        local ok, err = pcall(function() ConfigManager:saveAllConfigs() end)
+        if not ok then print("ERROR saving configs: " .. tostring(err)) end
+    end
     return false
 end

@@ -29,6 +29,8 @@ function love.conf(t)
 
     -- Headless test runs create no window at all.
     if _G.HEADLESS then
+        -- Keep test writes isolated from the player's real save directory.
+        t.identity = "RogueKeys-test"
         t.window = false
         t.modules.audio = false
         t.modules.sound = false

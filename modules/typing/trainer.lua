@@ -7,6 +7,7 @@
 
 local Theme = require("modules/ui/theme")
 local Audio = require("modules/audio/audio")
+local Steam = require("modules/steam/steam")
 
 local TypingTrainer = {}
 TypingTrainer.__index = TypingTrainer
@@ -139,6 +140,7 @@ function TypingTrainer.new(options)
     self.finished = false
     self.correctCount = 0
     self.mistakes = 0
+    self.critCount = 0
     self.currentStreak = 0
     self.longestStreak = 0
     self.lastMilestoneStreak = 0
@@ -219,9 +221,18 @@ function TypingTrainer:handleInput(char)
     local points, procs = 0, {}
 
     if isCorrect then
+        if self.correctCount == 0 then
+            Steam.unlockAchievement("FIRST_KEYSTROKE")
+        end
+
         self.currentStreak = self.currentStreak + 1
         if self.currentStreak > self.longestStreak then
             self.longestStreak = self.currentStreak
+            if self.longestStreak == 50 then
+                Steam.unlockAchievement("STREAK_50")
+            elseif self.longestStreak == 200 then
+                Steam.unlockAchievement("STREAK_200")
+            end
         end
 
         points, procs = self:scoreKeystroke(char)
@@ -232,6 +243,10 @@ function TypingTrainer:handleInput(char)
         self:checkStreakMilestone()
 
         if procs.crit then
+            self.critCount = self.critCount + 1
+            if self.critCount == 10 then
+                Steam.unlockAchievement("CRIT_STREAK")
+            end
             Audio.playSfx("crit")
             if self.onCrit then self.onCrit(char, points) end
         end

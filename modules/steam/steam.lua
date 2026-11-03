@@ -76,6 +76,10 @@ function Steam.unlockAchievement(id)
     safeCall(function() luasteam.UserStats.SetAchievement(id) end)
 end
 
+function Steam.isAchievementSent(id)
+    return not not sentAchievements[id]
+end
+
 function Steam.setStat(name, value)
     if not name or not available then return end
     safeCall(function() luasteam.UserStats.SetStat(name, value) end)
@@ -96,8 +100,9 @@ function Steam.update()
 end
 
 function Steam.shutdown()
-    if not available then return end
-    safeCall(function() luasteam.Shutdown() end)
+    if available then
+        safeCall(function() luasteam.Shutdown() end)
+    end
     available = false
     luasteam = nil
     sentAchievements = {}

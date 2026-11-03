@@ -433,27 +433,6 @@ function ResourceManager:init()
             self:getFont("default", size)
         end
     end
-
-    -- Explicitly load keyboard sprites (even if they're not in the standard resources folder)
-    local keyboardSpritePath = "resources/sprites/keyboard_letters_and_symbols.png"
-    if love.filesystem.getInfo(keyboardSpritePath) then
-        self:loadSprite("keyboard_sprites", keyboardSpritePath)
-    else
-        -- Try alternate locations
-        local alternatePaths = {
-            "assets/keyboard_letters_and_symbols.png",
-            "data/keyboard_letters_and_symbols.png",
-            "keyboard_letters_and_symbols.png"
-        }
-
-        for _, path in ipairs(alternatePaths) do
-            if love.filesystem.getInfo(path) then
-                self:loadSprite("keyboard_sprites", path)
-                debugPrint("ResourceManager: Loaded keyboard sprites from alternate path: " .. path)
-                break
-            end
-        end
-    end
 end
 
 return ResourceManager
